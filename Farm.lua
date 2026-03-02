@@ -87,8 +87,40 @@ return function(Core)
     -- LOGIC & ENGINE
     -- =========================================================================
 
+    -- [BARU] SISTEM GLIDING & FLUID MOVEMENT (Diadopsi dari Pabrik)
+    local function GlideTo(targetPos, moveSpeed, toggleKey)
+        if not Core.Managers.MovementState then return false end
+        local currentPos = Core.Managers.MovementState.Position
+        local dist = (targetPos - currentPos).Magnitude
+        
+        -- Meluncur mulus ke arah item
+        while dist > 0.5 and Core.Toggles[toggleKey] do
+            local dt = task.wait()
+            local step = (targetPos - currentPos).Unit * moveSpeed * dt
+            
+            if step.Magnitude >= dist then
+                Core.Managers.MovementState.Position = targetPos
+                Core.Managers.MovementState.OldPosition = targetPos
+                break
+            else
+                currentPos = currentPos + step
+                Core.Managers.MovementState.Position = currentPos
+                Core.Managers.MovementState.OldPosition = currentPos
+            end
+            dist = (targetPos - currentPos).Magnitude
+        end
+        
+        -- Rem Paksa (Kinetic Brake) untuk mencegah Rubberbanding
+        if Core.Managers.MovementState then
+            Core.Managers.MovementState.VelocityX = 0
+            Core.Managers.MovementState.VelocityY = 0
+            Core.Managers.MovementState.MoveX = 0
+            Core.Managers.MovementState.MoveY = 0
+        end
+        return true
+    end
+
     -- [ FPS BOOSTER ] GLOBAL ANCHOR MANAGER 
-    -- Mengunci fisik karakter jika salah satu fitur auto menyala agar tidak terjadi FPS Drop
     task.spawn(function()
         while task.wait(0.2) do
             pcall(function()
@@ -249,9 +281,9 @@ return function(Core)
                                 farmPhase = "LOOT"
                             end
 
-                        -- FASE 3: LOOT ITEM
+                        -- FASE 3: LOOT ITEM (DIPERBARUI DENGAN FLUID GLIDE)
                         elseif farmPhase == "LOOT" then
-                            task.wait(0.3) 
+                            task.wait(0.3) -- Jeda agar server memunculkan item drop
 
                             local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
                             local itemsToLoot = {}
@@ -266,33 +298,47 @@ return function(Core)
                             local didLoot = false
 
                             if #itemsToLoot > 0 then
-                                table.sort(itemsToLoot, function(a, b)
-                                    local posA = a:IsA("BasePart") and a.Position or (a:IsA("Model") and a.PrimaryPart and a.PrimaryPart.Position) or Vector3.new(9999,9999,9999)
-                                    local posB = b:IsA("BasePart") and b.Position or (b:IsA("Model") and b.PrimaryPart and b.PrimaryPart.Position) or Vector3.new(9999,9999,9999)
-                                    return posA.X < posB.X
+                                local validItems = {}
+                                local centerVec = Vector2.new(farmStartPos.X, farmStartPos.Y)
+                                
+                                -- 1. Ambil item yang berada dalam radius grid Farm kita (15 grid)
+                                for _, item in ipairs(itemsToLoot) do
+                                    local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
+                                    if part then
+                                        local itemVec = Vector2.new(part.Position.X, part.Position.Y)
+                                        local distFromCenter = (itemVec - centerVec).Magnitude
+                                        
+                                        if distFromCenter <= (15 * Core.Utils.TILE_SIZE) then 
+                                            table.insert(validItems, {item = item, part = part, pos = part.Position})
+                                        end
+                                    end
+                                end
+
+                                -- 2. Sortir berdasarkan item yang paling dekat dengan Player saat ini agar mengalir
+                                table.sort(validItems, function(a, b)
+                                    if not Core.Managers.MovementState then return false end
+                                    local pPos = Core.Managers.MovementState.Position
+                                    return (a.pos - pPos).Magnitude < (b.pos - pPos).Magnitude
                                 end)
                                 
                                 local moveSpeed = 45
                                 
-                                for _, item in ipairs(itemsToLoot) do
+                                -- 3. Eksekusi meluncur ambil barang
+                                for _, data in ipairs(validItems) do
                                     if not Core.Toggles.smartAutoFarm then break end
-                                    local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
-                                    if part and part.Parent then
-                                        local endX = math.floor(part.Position.X / Core.Utils.TILE_SIZE + 0.5)
-                                        local endY = math.floor(part.Position.Y / Core.Utils.TILE_SIZE + 0.5)
-                                        local distFromStart = math.sqrt((endX - startPx)^2 + (endY - startPy)^2)
-                                        
-                                        if distFromStart <= 15 and not Core.Pathfinding.isOutOfBounds(endX, endY) and not Core.Pathfinding.isItemTrapped(endX, endY) then
-                                            Core.Pathfinding.aiMoveTo(endX, endY, moveSpeed, "smartAutoFarm")
-                                            didLoot = true
-                                        end
+                                    local ex = math.floor(data.pos.X / Core.Utils.TILE_SIZE + 0.5)
+                                    local ey = math.floor(data.pos.Y / Core.Utils.TILE_SIZE + 0.5)
+                                    
+                                    if not Core.Pathfinding.isOutOfBounds(ex, ey) and not Core.Pathfinding.isItemTrapped(ex, ey) then
+                                        GlideTo(data.pos, moveSpeed, "smartAutoFarm")
+                                        task.wait(0.05) -- Nafas memungut item
+                                        didLoot = true
                                     end
                                 end
                                 
+                                -- 4. Meluncur kembali mulus ke titik Player Stand Pos semula
                                 if didLoot and Core.Toggles.smartAutoFarm then
-                                    Core.Pathfinding.aiMoveTo(startPx, startPy, moveSpeed, "smartAutoFarm")
-                                    Core.Managers.MovementState.Position = farmStartPos
-                                    Core.Managers.MovementState.OldPosition = farmStartPos
+                                    GlideTo(farmStartPos, moveSpeed, "smartAutoFarm")
                                 end
                             end
                             
@@ -458,7 +504,7 @@ return function(Core)
         end
     end)
 
-    -- GENIUS AUTO LOOT (Global)
+    -- GENIUS AUTO LOOT (Global - DIPERBARUI DENGAN FLUID GLIDE)
     task.spawn(function()
         while task.wait(0.1) do
             pcall(function()
@@ -475,23 +521,31 @@ return function(Core)
                             if obj:IsA("BasePart") and not obj:IsDescendantOf(Core.LocalPlayer.Character) and not Core.Players:GetPlayerFromCharacter(obj.Parent) and obj.Size.Y < 3 and not Core.Pathfinding.blacklistedItems[obj] then table.insert(itemsToLoot, obj) end
                         end
                     end
+                    
                     if #itemsToLoot > 0 then
                         table.sort(itemsToLoot, function(a, b)
                             local posA = a:IsA("BasePart") and a.Position or (a:IsA("Model") and a.PrimaryPart and a.PrimaryPart.Position) or Vector3.new(9999,9999,9999)
                             local posB = b:IsA("BasePart") and b.Position or (b:IsA("Model") and b.PrimaryPart and b.PrimaryPart.Position) or Vector3.new(9999,9999,9999)
                             return (pPos - posA).Magnitude < (pPos - posB).Magnitude
                         end)
+                        
                         local moveSpeed = tonumber(Core.Inputs["lootSpeedBox"] and Core.Inputs["lootSpeedBox"].Text or "45") or 45
+                        
                         for _, item in ipairs(itemsToLoot) do
                             if not Core.Toggles.autoLoot then break end
                             local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
                             if part and part.Parent then
                                 local endX = math.floor(part.Position.X / Core.Utils.TILE_SIZE + 0.5)
                                 local endY = math.floor(part.Position.Y / Core.Utils.TILE_SIZE + 0.5)
+                                
                                 if Core.Pathfinding.isOutOfBounds(endX, endY) or Core.Pathfinding.isItemTrapped(endX, endY) then
                                     Core.Pathfinding.blacklistedItems[item] = true
                                 else
-                                    if not Core.Pathfinding.aiMoveTo(endX, endY, moveSpeed, "autoLoot") then Core.Pathfinding.blacklistedItems[item] = true end
+                                    -- Memakai GlideTo agar pergerakan mulus lurus ke item
+                                    if not GlideTo(part.Position, moveSpeed, "autoLoot") then 
+                                        Core.Pathfinding.blacklistedItems[item] = true 
+                                    end
+                                    task.wait(0.05)
                                 end
                             end
                         end
