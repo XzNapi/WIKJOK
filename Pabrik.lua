@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (INTEGRATED NLIGHT MODULE)
+    -- WIKJOK: AUTO PABRIK (INTEGRATED & OPTIMIZED)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -21,7 +21,6 @@ return function(Core)
     Core.UI.createInputRow("Akhir Tanam [X,Y]", "55,37", secSapling, 0.4, "pabrikSapEnd")
     Core.UI.createInputRow("Baris Akhir [Y]", "29", secSapling, 0.4, "pabrikSapLimitY")
     
-    -- Menggunakan fungsi bawaan NLight + Filter Cerdas (Hanya tampilkan sapling)
     Core.UI.createInventoryDropdown("Pilih Sapling", "pabrikSaplingType", secSapling, nil, function(itemName, itemId)
         local n = string.lower(itemName); local id = string.lower(itemId)
         return string.find(n, "sapling") or string.find(id, "sapling")
@@ -78,9 +77,12 @@ return function(Core)
         return count, targetSlot
     end
 
+    -- [FIX] Mengubah OldPosition agar tidak terjadi patah-patah (Rubberbanding)
     local function MoveToGrid(gx, gy)
         if Core.Managers.MovementState then
-            Core.Managers.MovementState.Position = Vector3.new(gx, gy, 0) * Core.Utils.TILE_SIZE
+            local targetVec = Vector3.new(gx, gy, 0) * Core.Utils.TILE_SIZE
+            Core.Managers.MovementState.Position = targetVec
+            Core.Managers.MovementState.OldPosition = targetVec 
             Core.Managers.MovementState.VelocityX, Core.Managers.MovementState.VelocityY = 0, 0
         end
     end
@@ -93,9 +95,10 @@ return function(Core)
     end
 
     local function IsSaplingGrown(gx, gy, plantTime)
-        return (os.time() - plantTime) >= 60 -- Asumsi tumbuh 60 detik (bisa diubah)
+        return (os.time() - plantTime) >= 60 
     end
 
+    -- [FIX] Menambahkan OldPosition dan sedikit delay agar server merespon loot
     local function FastAutoLoot(radiusPos)
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         if dropsFolder and Core.Managers.MovementState then
@@ -105,7 +108,9 @@ return function(Core)
                     local dist = (Vector2.new(part.Position.X, part.Position.Y) - Vector2.new(radiusPos.X, radiusPos.Y)).Magnitude
                     if dist < (20 * Core.Utils.TILE_SIZE) then
                         Core.Managers.MovementState.Position = part.Position
-                        task.wait(0.05)
+                        Core.Managers.MovementState.OldPosition = part.Position
+                        Core.Managers.MovementState.VelocityX, Core.Managers.MovementState.VelocityY = 0, 0
+                        task.wait(0.1)
                     end
                 end
             end
@@ -122,20 +127,15 @@ return function(Core)
         
         if not engineActive then 
             print("[NLight Pabrik] Sistem Dimatikan.")
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = false end
             return 
         end
 
         print("[NLight Pabrik] Sistem Dijalankan! Memulai Loop Tertutup.")
 
         task.spawn(function()
-            -- FPS Booster (Global Anchor)
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = true end
+            -- HRP Anchored sengaja DIHAPUS agar tidak tabrakan dengan Physics
 
             while engineActive do
-                -- Mengambil Data Langsung dari UI NLight
                 local standX, standY = ParsePos(Core.Inputs["pabrikStandPos"] and Core.Inputs["pabrikStandPos"].Text or "0,0")
                 local farmX, farmY = ParsePos(Core.Inputs["pabrikBlockPos"] and Core.Inputs["pabrikBlockPos"].Text or "0,0")
                 local blockType = string.lower(Core.Inputs["pabrikBlockType"] and Core.Inputs["pabrikBlockType"].Text or "")
@@ -148,7 +148,9 @@ return function(Core)
                 if saplingType == "auto" then saplingType = "dirt_sapling" end
                 saplingType = string.lower(saplingType)
 
+                -- [FIX] Membatasi BreakSpeed minimal 150ms agar server tidak lag
                 local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
+                breakDelay = math.max(breakDelay, 0.15)
 
                 -- ==========================================
                 -- FASE 1: SMART AUTO FARM BLOCK
@@ -165,8 +167,11 @@ return function(Core)
                         task.wait(0.1)
                     end
 
-                    while HasBlock(farmX, farmY) and engineActive do
+                    -- [FIX] Anti-Stuck Timeout: Jika dipukul 50x ga hancur, skip (mungkin nge-bug)
+                    local hitCount = 0
+                    while HasBlock(farmX, farmY) and engineActive and hitCount < 50 do
                         if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(farmX, farmY)) end
+                        hitCount = hitCount + 1
                         task.wait(breakDelay)
                     end
 
@@ -196,7 +201,7 @@ return function(Core)
                         
                         if not HasBlock(x, y) then
                             MoveToGrid(x, y)
-                            task.wait(0.1)
+                            task.wait(0.2) -- [FIX] Delay ekstra agar pergerakan halus
                             if Core.Remotes.PlayerPlaceRemote then
                                 Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
                                 table.insert(plantedSaplings, {X = x, Y = y, Time = os.time()})
@@ -229,10 +234,13 @@ return function(Core)
                 for _, sapling in ipairs(plantedSaplings) do
                     if not engineActive then break end
                     MoveToGrid(sapling.X, sapling.Y)
-                    task.wait(0.1)
+                    task.wait(0.2)
 
-                    while HasBlock(sapling.X, sapling.Y) and engineActive do
+                    -- [FIX] Anti-Stuck Timeout untuk Pohon
+                    local hitCount = 0
+                    while HasBlock(sapling.X, sapling.Y) and engineActive and hitCount < 80 do
                         if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
+                        hitCount = hitCount + 1
                         task.wait(breakDelay)
                     end
                     FastAutoLoot(Vector3.new(sapling.X * Core.Utils.TILE_SIZE, sapling.Y * Core.Utils.TILE_SIZE, 0))
