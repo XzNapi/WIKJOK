@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (FLUID GLIDE + IGNORE GEM)
+    -- WIKJOK: AUTO PABRIK (FULL FLUID GLIDE & RARITY MATH EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -31,7 +31,6 @@ return function(Core)
     Core.UI.createInputRow("Walk Speed", "45", secControl, 0.4, "pabrikWalkSpeed")
     Core.UI.createInputRow("Place Delay (ms)", "150", secControl, 0.4, "pabrikPlaceSpeed")
     Core.UI.createInputRow("Break Speed (ms)", "250", secControl, 0.4, "pabrikBreakSpeed")
-    Core.UI.createToggle("Ignore Gem Drops", "pabrikIgnoreGem", secControl, true) -- [BARU] Toggle Ignore Gem
     
     -- ==========================================
     -- FUNGSI UTILITAS PABRIK
@@ -124,11 +123,13 @@ return function(Core)
     -- SISTEM GLIDING & FLUID LOOT
     -- ==========================================
     
+    -- Bergerak mengalir (Lerp/Velocity math) lurus ke titik Vector3
     local function GlideTo(targetPos, moveSpeed)
         if not Core.Managers.MovementState then return false end
         local currentPos = Core.Managers.MovementState.Position
         local dist = (targetPos - currentPos).Magnitude
         
+        -- Meluncur perlahan tapi pasti
         while dist > 0.5 and Core.Toggles.autoPabrik do
             local dt = task.wait()
             local step = (targetPos - currentPos).Unit * moveSpeed * dt
@@ -147,28 +148,21 @@ return function(Core)
         return true
     end
 
+    -- Loot yang mengalir persis ke item drop
     local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
         
-        -- [BARU] Logika filter pintar (Cek Blacklist & Status Ignore Gem)
-        local function isValidLoot(obj)
-            if Core.Pathfinding.blacklistedItems[obj] then return false end
-            -- Membaca nama item, jika mengandung kata 'gem' dan toggle menyala, abaikan item ini
-            if Core.Toggles.pabrikIgnoreGem and string.find(string.lower(obj.Name), "gem") then return false end
-            return true
-        end
-
         if dropsFolder then
             for _, v in ipairs(dropsFolder:GetChildren()) do
-                if (v:IsA("BasePart") or v:IsA("Model")) and isValidLoot(v) then 
+                if (v:IsA("BasePart") or v:IsA("Model")) and not Core.Pathfinding.blacklistedItems[v] then 
                     table.insert(itemsToLoot, v) 
                 end
             end
         else
             for _, obj in ipairs(workspace:GetChildren()) do
-                if obj:IsA("BasePart") and not obj:IsDescendantOf(Core.LocalPlayer.Character) and not Core.Players:GetPlayerFromCharacter(obj.Parent) and obj.Size.Y < 3 and isValidLoot(obj) then 
+                if obj:IsA("BasePart") and not obj:IsDescendantOf(Core.LocalPlayer.Character) and not Core.Players:GetPlayerFromCharacter(obj.Parent) and obj.Size.Y < 3 and not Core.Pathfinding.blacklistedItems[obj] then 
                     table.insert(itemsToLoot, obj) 
                 end
             end
@@ -190,6 +184,7 @@ return function(Core)
                 end
             end
 
+            -- Sort by urutan terdekat dengan Player agar mengalir seperti magnet
             table.sort(validItems, function(a, b) 
                 if not Core.Managers.MovementState then return false end
                 local pPos = Core.Managers.MovementState.Position
@@ -224,7 +219,7 @@ return function(Core)
             return 
         end
 
-        print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
+        print("[NLight Pabrik] Sistem Dijalankan! Menggunakan Fluid Movement...")
 
         task.spawn(function()
             local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
@@ -272,7 +267,7 @@ return function(Core)
                         brokeBlock = true
                     end
 
-                    if brokeBlock then task.wait(0.2) end
+                    if brokeBlock then task.wait(0.2) end 
 
                     FluidAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
@@ -289,7 +284,7 @@ return function(Core)
                 local loopStepX = (sStartX <= sEndX) and 1 or -1
                 local loopStepY = (sStartY >= sLimitY) and -2 or 2 
 
-                -- [A] Tanam
+                -- [A] Tanam (SEKARANG MENGGUNAKAN FLUID GLIDE)
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
                     
@@ -304,7 +299,9 @@ return function(Core)
                         end
                         
                         if not HasBlock(x, y) then
-                            if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
+                            -- GlideTo langsung ke titik kordinat fisik x, y
+                            local targetPlantVec = Vector3.new(x, y, 0) * Core.Utils.TILE_SIZE
+                            if GlideTo(targetPlantVec, walkSpeed) then
                                 StopMovement()
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
@@ -312,8 +309,6 @@ return function(Core)
                                     table.insert(plantedSaplings, {X = x, Y = y, Time = workspace:GetServerTimeNow()})
                                     task.wait(placeDelay)
                                 end
-                            else
-                                Core.Pathfinding.blacklistedSpots[x..","..y] = true
                             end
                         end
                     end
@@ -339,13 +334,14 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat
+                -- [C] Panen Eksekusi Cepat (SEKARANG MENGGUNAKAN FLUID GLIDE)
                 if #plantedSaplings > 0 then
                     print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        if Core.Pathfinding.aiMoveTo(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
+                        local targetBreakVec = Vector3.new(sapling.X, sapling.Y, 0) * Core.Utils.TILE_SIZE
+                        if GlideTo(targetBreakVec, walkSpeed) then
                             StopMovement()
                             task.wait(0.05)
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
