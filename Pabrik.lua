@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (LOOT SYNC EDITION)
+    -- WIKJOK: AUTO PABRIK (FLUID GLIDE & RARITY MATH EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -29,7 +29,7 @@ return function(Core)
     -- UI SETUP: Pengaturan & Eksekusi
     local secControl = Core.UI.createSection(page, "4. Pengaturan & Eksekusi")
     Core.UI.createInputRow("Walk Speed", "45", secControl, 0.4, "pabrikWalkSpeed")
-    Core.UI.createInputRow("Place Delay (ms)", "150", secControl, 0.4, "pabrikPlaceSpeed") -- [BARU]
+    Core.UI.createInputRow("Place Delay (ms)", "150", secControl, 0.4, "pabrikPlaceSpeed")
     Core.UI.createInputRow("Break Speed (ms)", "250", secControl, 0.4, "pabrikBreakSpeed")
     
     -- ==========================================
@@ -119,7 +119,37 @@ return function(Core)
         end
     end
 
-    local function SafeAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
+    -- ==========================================
+    -- SISTEM GLIDING & FLUID LOOT
+    -- ==========================================
+    
+    -- Bergerak mengalir (Lerp/Velocity math) lurus ke titik Vector3
+    local function GlideTo(targetPos, moveSpeed)
+        if not Core.Managers.MovementState then return false end
+        local currentPos = Core.Managers.MovementState.Position
+        local dist = (targetPos - currentPos).Magnitude
+        
+        -- Meluncur perlahan tapi pasti, tidak mempedulikan Grid/A*
+        while dist > 0.5 and Core.Toggles.autoPabrik do
+            local dt = task.wait()
+            local step = (targetPos - currentPos).Unit * moveSpeed * dt
+            
+            if step.Magnitude >= dist then
+                Core.Managers.MovementState.Position = targetPos
+                Core.Managers.MovementState.OldPosition = targetPos
+                break
+            else
+                currentPos = currentPos + step
+                Core.Managers.MovementState.Position = currentPos
+                Core.Managers.MovementState.OldPosition = currentPos
+            end
+            dist = (targetPos - currentPos).Magnitude
+        end
+        return true
+    end
+
+    -- Loot yang mengalir persis ke item drop (mengabaikan tengah blok)
+    local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
@@ -140,31 +170,41 @@ return function(Core)
 
         if #itemsToLoot > 0 then
             local validItems = {}
+            local centerVec = Vector2.new(radiusGridX * Core.Utils.TILE_SIZE, radiusGridY * Core.Utils.TILE_SIZE)
+            
             for _, item in ipairs(itemsToLoot) do
                 local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
                 if part then
-                    local ex = math.floor(part.Position.X / Core.Utils.TILE_SIZE + 0.5)
-                    local ey = math.floor(part.Position.Y / Core.Utils.TILE_SIZE + 0.5)
-                    local dist = math.sqrt((ex - radiusGridX)^2 + (ey - radiusGridY)^2)
+                    local itemVec = Vector2.new(part.Position.X, part.Position.Y)
+                    local distFromCenter = (itemVec - centerVec).Magnitude
                     
-                    if dist <= rad then table.insert(validItems, {item = item, part = part, ex = ex, ey = ey, dist = dist}) end
+                    -- Konversi grid rad ke unit jarak fisik (TILE_SIZE)
+                    if distFromCenter <= (rad * Core.Utils.TILE_SIZE) then 
+                        table.insert(validItems, {item = item, part = part, pos = part.Position}) 
+                    end
                 end
             end
 
-            table.sort(validItems, function(a, b) return a.dist < b.dist end)
+            -- Sort by urutan terdekat dengan Player, BUKAN terdekat dengan block!
+            -- Ini membuat loot mengalir dari satu item ke item lain seperti di-magnet.
+            table.sort(validItems, function(a, b) 
+                if not Core.Managers.MovementState then return false end
+                local pPos = Core.Managers.MovementState.Position
+                return (a.pos - pPos).Magnitude < (b.pos - pPos).Magnitude 
+            end)
 
             for _, data in ipairs(validItems) do
                 if not Core.Toggles.autoPabrik then break end
                 
-                if Core.Pathfinding.isOutOfBounds(data.ex, data.ey) or Core.Pathfinding.isItemTrapped(data.ex, data.ey) then
+                local ex = math.floor(data.pos.X / Core.Utils.TILE_SIZE + 0.5)
+                local ey = math.floor(data.pos.Y / Core.Utils.TILE_SIZE + 0.5)
+                
+                if Core.Pathfinding.isOutOfBounds(ex, ey) or Core.Pathfinding.isItemTrapped(ex, ey) then
                     Core.Pathfinding.blacklistedItems[data.item] = true
                 else
-                    if Core.Pathfinding.aiMoveTo(data.ex, data.ey, moveSpeed, "autoPabrik") then 
-                        StopMovement()
-                        task.wait(0.05)
-                    else
-                        Core.Pathfinding.blacklistedItems[data.item] = true 
-                    end
+                    GlideTo(data.pos, moveSpeed)
+                    StopMovement()
+                    task.wait(0.05) -- Nafas pungut sedikit
                 end
             end
         end
@@ -181,7 +221,7 @@ return function(Core)
             return 
         end
 
-        print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur Pathfinding...")
+        print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
 
         task.spawn(function()
             local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
@@ -212,14 +252,15 @@ return function(Core)
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
 
-                    -- Pindah ke tempat berdiri dan Mengerem
-                    Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
+                    -- [DIPERBARUI] Meluncur mengalir langsung ke titik stand, bukan pathfinding kaku
+                    local targetStandVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
+                    GlideTo(targetStandVec, walkSpeed)
                     StopMovement()
-                    task.wait(0.1)
+                    task.wait(0.05) -- Nafas sejenak
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
-                        task.wait(placeDelay) -- [DIPERBARUI] Delay saat menaruh blok
+                        task.wait(placeDelay)
                     end
 
                     local brokeBlock = false
@@ -229,14 +270,10 @@ return function(Core)
                         brokeBlock = true
                     end
 
-                    -- [DIPERBARUI] Jeda penting agar server sempat memunculkan item drop secara fisik
-                    if brokeBlock then
-                        task.wait(0.2) 
-                    end
+                    if brokeBlock then task.wait(0.2) end -- Kasih server waktu drop item
 
-                    -- Loot Block (Radius kecil 5 Grid)
-                    SafeAutoLoot(farmX, farmY, walkSpeed, 5)
-                    task.wait(0.1) -- Jeda nafas sebelum menaruh blok berikutnya
+                    -- [DIPERBARUI] Looting mengalir seperti air
+                    FluidAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
                 if not Core.Toggles.autoPabrik then break end
@@ -251,7 +288,7 @@ return function(Core)
                 local loopStepX = (sStartX <= sEndX) and 1 or -1
                 local loopStepY = (sStartY >= sLimitY) and -2 or 2 
 
-                -- [A] Tanam
+                -- [A] Tanam (Pohon pakai A* karena melewati Grid tertutup)
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
                     
@@ -272,7 +309,7 @@ return function(Core)
                                 if Core.Remotes.PlayerPlaceRemote then
                                     Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
                                     table.insert(plantedSaplings, {X = x, Y = y, Time = workspace:GetServerTimeNow()})
-                                    task.wait(placeDelay) -- [DIPERBARUI] Memakai settingan Place Delay
+                                    task.wait(placeDelay)
                                 end
                             else
                                 Core.Pathfinding.blacklistedSpots[x..","..y] = true
@@ -319,15 +356,15 @@ return function(Core)
                     
                     if not Core.Toggles.autoPabrik then break end
 
-                    -- [C.2] Mass Sweeping Loot
+                    -- [C.2] Mass Sweeping Loot Fluid
                     print("[WIKJOK] Penghancuran Selesai! Memungut semua item hasil panen...")
-                    task.wait(0.5) -- Jeda ekstra sebelum nyapu massal agar server drop semua item
+                    task.wait(0.5)
                     
                     local centerX = (sStartX + sEndX) / 2
                     local centerY = (sStartY + sLimitY) / 2
                     local fieldRadius = math.max(math.abs(sStartX - sEndX), math.abs(sStartY - sLimitY)) + 10
                     
-                    SafeAutoLoot(centerX, centerY, walkSpeed, fieldRadius)
+                    FluidAutoLoot(centerX, centerY, walkSpeed, fieldRadius)
                 end
 
                 -- [D] ANTI-CRASH PROTECTION
