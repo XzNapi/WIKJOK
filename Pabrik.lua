@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (MASS LOOT & ANTI-RUBBERBAND)
+    -- WIKJOK: AUTO PABRIK (ANTI-MISS LOOT & RARITY MATH EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -108,7 +108,6 @@ return function(Core)
         return (currentTime - serverPlantedAt) >= requiredGrowTime
     end
 
-    -- ANTI-RUBBERBAND KINETIC BRAKE
     local function StopMovement()
         if Core.Managers.MovementState then
             Core.Managers.MovementState.VelocityX = 0
@@ -119,7 +118,7 @@ return function(Core)
         end
     end
 
-    -- AUTO LOOT DENGAN RADIUS DINAMIS
+    -- AUTO LOOT BERBASIS PHYSICAL VACUUM (Anti-Miss untuk Item Berceceran)
     local function SafeAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
@@ -157,14 +156,26 @@ return function(Core)
             for _, data in ipairs(validItems) do
                 if not Core.Toggles.autoPabrik then break end
                 
-                if Core.Pathfinding.isOutOfBounds(data.ex, data.ey) or Core.Pathfinding.isItemTrapped(data.ex, data.ey) then
-                    Core.Pathfinding.blacklistedItems[data.item] = true
-                else
-                    if Core.Pathfinding.aiMoveTo(data.ex, data.ey, moveSpeed, "autoPabrik") then 
-                        StopMovement() -- Rem setelah sampai di item
-                        task.wait(0.05)
+                -- Pastikan part masih ada (belum terambil oleh sistem atau player lain)
+                if data.part and data.part.Parent then
+                    if Core.Pathfinding.isOutOfBounds(data.ex, data.ey) or Core.Pathfinding.isItemTrapped(data.ex, data.ey) then
+                        Core.Pathfinding.blacklistedItems[data.item] = true
                     else
-                        Core.Pathfinding.blacklistedItems[data.item] = true 
+                        -- Jika jarak sangat dekat (<= 2 grid), langsung tempelkan fisik agar 100% terambil tanpa nyangkut di Pathfinding
+                        if data.dist <= 2 then
+                            Core.Managers.MovementState.Position = data.part.Position
+                            StopMovement()
+                            task.wait(0.05)
+                        else
+                            -- Pathfinding menuju grid, lalu sentuh fisik itemnya secara presisi
+                            if Core.Pathfinding.aiMoveTo(data.ex, data.ey, moveSpeed, "autoPabrik") then 
+                                Core.Managers.MovementState.Position = data.part.Position
+                                StopMovement()
+                                task.wait(0.05)
+                            else
+                                Core.Pathfinding.blacklistedItems[data.item] = true 
+                            end
+                        end
                     end
                 end
             end
@@ -227,6 +238,9 @@ return function(Core)
                         task.wait(breakDelay)
                     end
 
+                    -- [FIX] Delay kecil agar item spawn sebelum di-loot
+                    task.wait(0.15) 
+                    
                     -- Loot Block (Radius kecil)
                     SafeAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
@@ -246,7 +260,6 @@ return function(Core)
                 -- [A] Tanam
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
-                    
                     for x = sStartX, sEndX, loopStepX do
                         if not Core.Toggles.autoPabrik then break end
                         
@@ -259,7 +272,7 @@ return function(Core)
                         
                         if not HasBlock(x, y) then
                             if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
-                                StopMovement() -- Rem setelah sampai
+                                StopMovement() 
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
                                     Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
@@ -275,7 +288,7 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [B] Tunggu Matang 
+                -- [B] Tunggu Matang
                 if #plantedSaplings > 0 then
                     print(string.format("[WIKJOK] Menunggu %d Sapling Matang...", #plantedSaplings))
                     local allGrown = false
@@ -306,17 +319,17 @@ return function(Core)
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
                                 task.wait(breakDelay)
                             end
-                            -- [!] TIDAK ADA LOOT DI SINI. LANJUT HANCURKAN POHON BERIKUTNYA.
                         end
                     end
                     
                     if not Core.Toggles.autoPabrik then break end
 
                     -- [C.2] Mass Sweeping Loot
+                    -- Delay agar semua sapling yang hancur terakhir sempat spawn
+                    task.wait(0.2) 
                     print("[WIKJOK] Penghancuran Selesai! Memungut semua item hasil panen...")
                     local centerX = (sStartX + sEndX) / 2
                     local centerY = (sStartY + sLimitY) / 2
-                    -- Kalkulasi radius yang mencakup seluruh ladang sapling + margin error 10 block
                     local fieldRadius = math.max(math.abs(sStartX - sEndX), math.abs(sStartY - sLimitY)) + 10
                     
                     SafeAutoLoot(centerX, centerY, walkSpeed, fieldRadius)
