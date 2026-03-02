@@ -1,19 +1,19 @@
 -- ==========================================
--- WIKJOK: AUTO PABRIK (STANDALONE FIXED)
+-- WIKJOK: AUTO PABRIK (STANDALONE 100% FIXED)
 -- ==========================================
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ==========================================
--- 1. UI SETUP (DIPRIORITASKAN AGAR INSTANT MUNCUL)
+-- 1. UI SETUP (MENIRU PERSIS NLIGHT MAIN.LUA)
 -- ==========================================
-local oldGui = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("WIKJOK_UI")
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local oldGui = PlayerGui:FindFirstChild("WIKJOK_UI")
 if oldGui then oldGui:Destroy() end
 
-local WIKJOK_UI = Instance.new("ScreenGui", LocalPlayer.PlayerGui)
+local WIKJOK_UI = Instance.new("ScreenGui", PlayerGui)
 WIKJOK_UI.Name = "WIKJOK_UI"
 WIKJOK_UI.ResetOnSpawn = false
 WIKJOK_UI.IgnoreGuiInset = true 
@@ -27,55 +27,82 @@ local Theme = {
 }
 
 local MainFrame = Instance.new("Frame", WIKJOK_UI)
-MainFrame.Size = UDim2.new(0, 360, 0, 520); MainFrame.Position = UDim2.new(0.5, -180, 0.5, -260)
-MainFrame.BackgroundColor3 = Theme.BG; MainFrame.BorderSizePixel = 0
-MainFrame.Active = true; MainFrame.Draggable = true
+MainFrame.Size = UDim2.new(0, 360, 0, 520)
+MainFrame.Position = UDim2.new(0.5, -180, 0.5, -260)
+MainFrame.BackgroundColor3 = Theme.BG
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
-Instance.new("UIStroke", MainFrame).Color = Theme.Border
+Instance.new("UIStroke", MainFrame).Color = Theme.Accent
 
 local Title = Instance.new("TextLabel", MainFrame)
-Title.Size = UDim2.new(1, 0, 0, 40); Title.BackgroundTransparency = 1
-Title.Text = "⚙️ WIKJOK: AUTO PABRIK"; Title.Font = Enum.Font.GothamBlack
-Title.TextSize = 16; Title.TextColor3 = Theme.Accent
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundTransparency = 1
+Title.Text = "⚙️ WIKJOK: AUTO PABRIK"
+Title.Font = Enum.Font.GothamBlack
+Title.TextSize = 16
+Title.TextColor3 = Theme.Accent
 Instance.new("UIStroke", Title).Transparency = 0.8
 
 local CloseBtn = Instance.new("TextButton", MainFrame)
-CloseBtn.Size = UDim2.new(0, 40, 0, 40); CloseBtn.Position = UDim2.new(1, -40, 0, 0)
-CloseBtn.BackgroundTransparency = 1; CloseBtn.Text = "✕"
-CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 14; CloseBtn.TextColor3 = Theme.Text
+CloseBtn.Size = UDim2.new(0, 40, 0, 40)
+CloseBtn.Position = UDim2.new(1, -40, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "✕"
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 14
+CloseBtn.TextColor3 = Theme.Text
 CloseBtn.MouseButton1Click:Connect(function() WIKJOK_UI:Destroy() end)
 
 local ScrollFrame = Instance.new("ScrollingFrame", MainFrame)
-ScrollFrame.Size = UDim2.new(1, -20, 1, -50); ScrollFrame.Position = UDim2.new(0, 10, 0, 40)
-ScrollFrame.BackgroundTransparency = 1; ScrollFrame.ScrollBarThickness = 4
+ScrollFrame.Size = UDim2.new(1, -20, 1, -50)
+ScrollFrame.Position = UDim2.new(0, 10, 0, 40)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.ScrollBarThickness = 4
 ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
 
 local Layout = Instance.new("UIListLayout", ScrollFrame)
-Layout.SortOrder = Enum.SortOrder.LayoutOrder; Layout.Padding = UDim.new(0, 8)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+Layout.Padding = UDim.new(0, 8)
 
 local function CreateSectionLabel(text)
     local lbl = Instance.new("TextLabel", ScrollFrame)
-    lbl.Size = UDim2.new(1, 0, 0, 25); lbl.BackgroundTransparency = 1
-    lbl.Text = text; lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 12
-    lbl.TextColor3 = Theme.Accent; lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Size = UDim2.new(1, 0, 0, 25)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 12
+    lbl.TextColor3 = Theme.Accent
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
     return lbl
 end
 
 local function CreateInput(labelText, placeholderName)
     local container = Instance.new("Frame", ScrollFrame)
-    container.Size = UDim2.new(1, 0, 0, 35); container.BackgroundColor3 = Theme.Surface
+    container.Size = UDim2.new(1, 0, 0, 35)
+    container.BackgroundColor3 = Theme.Surface
     Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
 
     local label = Instance.new("TextLabel", container)
-    label.Size = UDim2.new(0.5, 0, 1, 0); label.Position = UDim2.new(0, 10, 0, 0)
-    label.BackgroundTransparency = 1; label.Text = labelText
-    label.Font = Enum.Font.GothamMedium; label.TextSize = 12
-    label.TextColor3 = Theme.Text; label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Size = UDim2.new(0.5, 0, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = Theme.Text
+    label.TextXAlignment = Enum.TextXAlignment.Left
 
     local box = Instance.new("TextBox", container)
-    box.Size = UDim2.new(0.45, 0, 0.7, 0); box.Position = UDim2.new(0.5, 0, 0.15, 0)
-    box.BackgroundColor3 = Theme.BG; box.Text = ""; box.PlaceholderText = placeholderName
-    box.Font = Enum.Font.GothamBold; box.TextSize = 12; box.TextColor3 = Theme.Accent
+    box.Size = UDim2.new(0.45, 0, 0.7, 0)
+    box.Position = UDim2.new(0.5, 0, 0.15, 0)
+    box.BackgroundColor3 = Theme.BG
+    box.Text = ""
+    box.PlaceholderText = placeholderName
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 12
+    box.TextColor3 = Theme.Accent
     Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
     Instance.new("UIStroke", box).Color = Theme.Border
     return box
@@ -83,26 +110,39 @@ end
 
 local function CreateSaplingDropdown(labelText)
     local container = Instance.new("Frame", ScrollFrame)
-    container.Size = UDim2.new(1, 0, 0, 35); container.BackgroundColor3 = Theme.Surface
-    container.ClipsDescendants = true; Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
+    container.Size = UDim2.new(1, 0, 0, 35)
+    container.BackgroundColor3 = Theme.Surface
+    container.ClipsDescendants = true
+    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
 
     local label = Instance.new("TextLabel", container)
-    label.Size = UDim2.new(0.5, 0, 0, 35); label.Position = UDim2.new(0, 10, 0, 0)
-    label.BackgroundTransparency = 1; label.Text = labelText
-    label.Font = Enum.Font.GothamMedium; label.TextSize = 12
-    label.TextColor3 = Theme.Text; label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Size = UDim2.new(0.5, 0, 0, 35)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = Theme.Text
+    label.TextXAlignment = Enum.TextXAlignment.Left
 
     local mainBtn = Instance.new("TextButton", container)
-    mainBtn.Size = UDim2.new(0.45, 0, 0, 25); mainBtn.Position = UDim2.new(0.5, 0, 0, 5)
-    mainBtn.BackgroundColor3 = Theme.BG; mainBtn.Text = "▶ dirt_sapling"
-    mainBtn.Font = Enum.Font.GothamBold; mainBtn.TextSize = 11; mainBtn.TextColor3 = Theme.Accent
+    mainBtn.Size = UDim2.new(0.45, 0, 0, 25)
+    mainBtn.Position = UDim2.new(0.5, 0, 0, 5)
+    mainBtn.BackgroundColor3 = Theme.BG
+    mainBtn.Text = "▶ dirt_sapling"
+    mainBtn.Font = Enum.Font.GothamBold
+    mainBtn.TextSize = 11
+    mainBtn.TextColor3 = Theme.Accent
     mainBtn.TextTruncate = Enum.TextTruncate.AtEnd
     Instance.new("UICorner", mainBtn).CornerRadius = UDim.new(0, 4)
     Instance.new("UIStroke", mainBtn).Color = Theme.Border
 
     local listFrame = Instance.new("ScrollingFrame", container)
-    listFrame.Size = UDim2.new(1, 0, 0, 100); listFrame.Position = UDim2.new(0, 0, 0, 35)
-    listFrame.BackgroundTransparency = 1; listFrame.ScrollBarThickness = 2
+    listFrame.Size = UDim2.new(1, 0, 0, 100)
+    listFrame.Position = UDim2.new(0, 0, 0, 35)
+    listFrame.BackgroundTransparency = 1
+    listFrame.ScrollBarThickness = 2
+    
     local listLayout = Instance.new("UIListLayout", listFrame)
 
     local isOpen = false
@@ -114,10 +154,9 @@ local function CreateSaplingDropdown(labelText)
             
             local saplingOptions = {"dirt_sapling", "wood_sapling", "stone_sapling"}
             
-            -- Scan Inventory (Menggunakan referensi yang sudah diambil di Background)
             pcall(function()
-                local tempInv = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Inventory"))
-                local tempItems = require(ReplicatedStorage:WaitForChild("Managers"):WaitForChild("ItemsManager"))
+                local tempInv = require(ReplicatedStorage:WaitForChild("Modules", 2):WaitForChild("Inventory", 2))
+                local tempItems = require(ReplicatedStorage:WaitForChild("Managers", 2):WaitForChild("ItemsManager", 2))
                 if tempInv and tempInv.Stacks then
                     local foundInInv = {}
                     for i = 1, (tempInv.MaxSlots or 100) do
@@ -144,12 +183,17 @@ local function CreateSaplingDropdown(labelText)
                 if not uniqueOptions[optName] then
                     uniqueOptions[optName] = true; addedCount = addedCount + 1
                     local optBtn = Instance.new("TextButton", listFrame)
-                    optBtn.Size = UDim2.new(1, 0, 0, 25); optBtn.BackgroundColor3 = Theme.Surface
-                    optBtn.Text = "  " .. optName; optBtn.Font = Enum.Font.GothamMedium
-                    optBtn.TextSize = 11; optBtn.TextColor3 = Theme.Text
-                    optBtn.TextXAlignment = Enum.TextXAlignment.Left; optBtn.BorderSizePixel = 0
+                    optBtn.Size = UDim2.new(1, 0, 0, 25)
+                    optBtn.BackgroundColor3 = Theme.Surface
+                    optBtn.Text = "  " .. optName
+                    optBtn.Font = Enum.Font.GothamMedium
+                    optBtn.TextSize = 11
+                    optBtn.TextColor3 = Theme.Text
+                    optBtn.TextXAlignment = Enum.TextXAlignment.Left
+                    optBtn.BorderSizePixel = 0
                     optBtn.MouseButton1Click:Connect(function()
-                        mainBtn.Text = "▶ " .. optName; isOpen = false
+                        mainBtn.Text = "▶ " .. optName
+                        isOpen = false
                         container.Size = UDim2.new(1, 0, 0, 35)
                     end)
                 end
@@ -181,9 +225,12 @@ local inputWalkSpeed = CreateInput("Walk Speed", "Default: 45")
 local inputBreakSpeed = CreateInput("Break Speed (ms)", "Default: 250")
 
 local ToggleBtn = Instance.new("TextButton", ScrollFrame)
-ToggleBtn.Size = UDim2.new(1, 0, 0, 45); ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-ToggleBtn.Text = "▶ START AUTO PABRIK"; ToggleBtn.Font = Enum.Font.GothamBlack
-ToggleBtn.TextSize = 14; ToggleBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
+ToggleBtn.Size = UDim2.new(1, 0, 0, 45)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+ToggleBtn.Text = "▶ START AUTO PABRIK"
+ToggleBtn.Font = Enum.Font.GothamBlack
+ToggleBtn.TextSize = 14
+ToggleBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
 Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 6)
 Instance.new("UIStroke", ToggleBtn).Color = Theme.Border
 
