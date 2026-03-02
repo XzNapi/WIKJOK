@@ -1,43 +1,29 @@
 -- ==========================================
--- WIKJOK: AUTO PABRIK (STANDALONE FULL SCRIPT)
+-- WIKJOK: AUTO PABRIK (STANDALONE FIXED)
 -- ==========================================
 
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ==========================================
--- FETCH ENVIRONMENT & MODULES
+-- 1. UI SETUP (DIPRIORITASKAN AGAR INSTANT MUNCUL)
 -- ==========================================
-local Remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
-local PlayerPlaceRemote = Remotes and Remotes:WaitForChild("PlayerPlaceItem", 5)
-local PlayerFistRemote = Remotes and Remotes:WaitForChild("PlayerFist", 5)
+local oldGui = LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("WIKJOK_UI")
+if oldGui then oldGui:Destroy() end
 
-local MovementState, WorldManager, InventoryModule, ItemsManager
-pcall(function() MovementState = require(LocalPlayer.PlayerScripts:WaitForChild("PlayerMovement")) end)
-pcall(function() WorldManager = require(ReplicatedStorage:WaitForChild("Managers"):WaitForChild("WorldManager")) end)
-pcall(function() InventoryModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Inventory")) end)
-pcall(function() ItemsManager = require(ReplicatedStorage:WaitForChild("Managers"):WaitForChild("ItemsManager")) end)
-
-local TILE_SIZE = 4.5
-
--- ==========================================
--- UI SETUP & FRAMEWORK
--- ==========================================
-local existingUI = CoreGui:FindFirstChild("WIKJOK_UI") or LocalPlayer.PlayerGui:FindFirstChild("WIKJOK_UI")
-if existingUI then existingUI:Destroy() end
-
-local uiParent = pcall(function() return CoreGui.Name end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
-local WIKJOK_UI = Instance.new("ScreenGui", uiParent)
+local WIKJOK_UI = Instance.new("ScreenGui", LocalPlayer.PlayerGui)
 WIKJOK_UI.Name = "WIKJOK_UI"
 WIKJOK_UI.ResetOnSpawn = false
+WIKJOK_UI.IgnoreGuiInset = true 
+WIKJOK_UI.DisplayOrder = 2147483647 
+WIKJOK_UI.ZIndexBehavior = Enum.ZIndexBehavior.Global
 
 local Theme = {
-    BG = Color3.fromRGB(20, 20, 25), Surface = Color3.fromRGB(30, 30, 35),
-    Accent = Color3.fromRGB(255, 140, 0), Text = Color3.fromRGB(240, 240, 240),
-    Border = Color3.fromRGB(50, 50, 55)
+    BG = Color3.fromRGB(13, 13, 17), Surface = Color3.fromRGB(22, 22, 28),
+    Accent = Color3.fromRGB(245, 158, 11), Text = Color3.fromRGB(250, 250, 255),
+    Border = Color3.fromRGB(45, 45, 55)
 }
 
 local MainFrame = Instance.new("Frame", WIKJOK_UI)
@@ -45,7 +31,7 @@ MainFrame.Size = UDim2.new(0, 360, 0, 520); MainFrame.Position = UDim2.new(0.5, 
 MainFrame.BackgroundColor3 = Theme.BG; MainFrame.BorderSizePixel = 0
 MainFrame.Active = true; MainFrame.Draggable = true
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
-Instance.new("UIStroke", MainFrame).Color = Theme.Accent
+Instance.new("UIStroke", MainFrame).Color = Theme.Border
 
 local Title = Instance.new("TextLabel", MainFrame)
 Title.Size = UDim2.new(1, 0, 0, 40); Title.BackgroundTransparency = 1
@@ -127,16 +113,20 @@ local function CreateSaplingDropdown(labelText)
             for _, child in ipairs(listFrame:GetChildren()) do if child:IsA("TextButton") then child:Destroy() end end
             
             local saplingOptions = {"dirt_sapling", "wood_sapling", "stone_sapling"}
+            
+            -- Scan Inventory (Menggunakan referensi yang sudah diambil di Background)
             pcall(function()
-                if InventoryModule and InventoryModule.Stacks then
+                local tempInv = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Inventory"))
+                local tempItems = require(ReplicatedStorage:WaitForChild("Managers"):WaitForChild("ItemsManager"))
+                if tempInv and tempInv.Stacks then
                     local foundInInv = {}
-                    for i = 1, (InventoryModule.MaxSlots or 100) do
-                        local stack = InventoryModule.Stacks[i]
+                    for i = 1, (tempInv.MaxSlots or 100) do
+                        local stack = tempInv.Stacks[i]
                         if stack and stack.Id and stack.Amount and stack.Amount > 0 then
                             local idStr = string.lower(tostring(stack.Id))
                             local itemName = idStr
-                            if ItemsManager and ItemsManager.ItemsData[stack.Id] then
-                                itemName = string.lower(tostring(ItemsManager.ItemsData[stack.Id].Name or idStr))
+                            if tempItems and tempItems.ItemsData[stack.Id] then
+                                itemName = string.lower(tostring(tempItems.ItemsData[stack.Id].Name or idStr))
                             end
                             if string.find(idStr, "sapling") or string.find(itemName, "sapling") then
                                 if not foundInInv[itemName] then
@@ -198,7 +188,30 @@ Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 6)
 Instance.new("UIStroke", ToggleBtn).Color = Theme.Border
 
 -- ==========================================
--- ENGINE HELPER FUNCTIONS
+-- 2. FETCH ENVIRONMENT (BACKGROUND LOADING)
+-- ==========================================
+local MovementState, WorldManager, InventoryModule, ItemsManager
+local Remotes, PlayerPlaceRemote, PlayerFistRemote
+
+task.spawn(function() pcall(function() MovementState = require(LocalPlayer.PlayerScripts:WaitForChild("PlayerMovement")) end) end)
+task.spawn(function() pcall(function() WorldManager = require(ReplicatedStorage:WaitForChild("Managers"):WaitForChild("WorldManager")) end) end)
+task.spawn(function() pcall(function() InventoryModule = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Inventory")) end) end)
+task.spawn(function() pcall(function() ItemsManager = require(ReplicatedStorage:WaitForChild("Managers"):WaitForChild("ItemsManager")) end) end)
+
+task.spawn(function()
+    pcall(function()
+        Remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+        if Remotes then
+            PlayerFistRemote = Remotes:WaitForChild("PlayerFist", 5)
+            PlayerPlaceRemote = Remotes:WaitForChild("PlayerPlaceItem", 5)
+        end
+    end)
+end)
+
+local TILE_SIZE = 4.5
+
+-- ==========================================
+-- 3. ENGINE HELPER FUNCTIONS
 -- ==========================================
 local isRunning = false
 
@@ -208,8 +221,7 @@ local function ParsePos(text)
 end
 
 local function GetItemSlotAndCount(targetName, expectedType)
-    local count = 0
-    local targetSlot = nil
+    local count = 0; local targetSlot = nil
     targetName = string.lower(targetName)
     
     if InventoryModule and InventoryModule.Stacks then
@@ -262,7 +274,6 @@ local function HasBlock(gx, gy)
 end
 
 local function IsSaplingGrown(gx, gy, plantTime)
-    -- Ganti angka 60 ini jika durasi tumbuh sapling di game ternyata lebih cepat/lama (60 = 60 detik)
     return (os.time() - plantTime) >= 60 
 end
 
@@ -283,7 +294,7 @@ local function StandaloneAutoLoot(radiusPos)
 end
 
 -- ==========================================
--- WIKJOK CORE RUNTIME LOOP
+-- 4. WIKJOK CORE RUNTIME LOOP
 -- ==========================================
 ToggleBtn.MouseButton1Click:Connect(function()
     isRunning = not isRunning
@@ -306,7 +317,6 @@ ToggleBtn.MouseButton1Click:Connect(function()
         print("[WIKJOK] Engine Started! Mode: Pabrik Siklus Penuh")
         
         task.spawn(function()
-            -- Lakukan Global Anchor agar FPS tidak drop (Bonus fitur dari NLight)
             local hrp = LocalPlayer.Character and (LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character.PrimaryPart)
             if hrp then hrp.Anchored = true end
 
@@ -345,7 +355,6 @@ ToggleBtn.MouseButton1Click:Connect(function()
                 local plantedSaplings = {}
                 local isOutOfSapling = false
                 
-                -- Kalkulasi arah penanaman otomatis (Kiri/Kanan, Atas/Bawah)
                 local loopStepX = (sStartX <= sEndX) and 1 or -1
                 local loopStepY = (sStartY >= sLimitY) and -2 or 2 
                 
@@ -409,7 +418,6 @@ ToggleBtn.MouseButton1Click:Connect(function()
                 print("[WIKJOK] Siklus Sapling Selesai! Mengulang kembali dari Fase 1.")
             end
 
-            -- Kembalikan physics normal saat stop
             local finalHrp = LocalPlayer.Character and (LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character.PrimaryPart)
             if finalHrp then finalHrp.Anchored = false end
         end)
