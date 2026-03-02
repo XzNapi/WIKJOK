@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (INTEGRATED & OPTIMIZED)
+    -- WIKJOK: AUTO PABRIK (A* PATHFINDING EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -28,6 +28,7 @@ return function(Core)
 
     -- UI SETUP: Pengaturan & Eksekusi
     local secControl = Core.UI.createSection(page, "4. Pengaturan & Eksekusi")
+    Core.UI.createInputRow("Walk Speed", "45", secControl, 0.4, "pabrikWalkSpeed")
     Core.UI.createInputRow("Break Speed (ms)", "250", secControl, 0.4, "pabrikBreakSpeed")
     
     -- ==========================================
@@ -77,16 +78,6 @@ return function(Core)
         return count, targetSlot
     end
 
-    -- [FIX] Mengubah OldPosition agar tidak terjadi patah-patah (Rubberbanding)
-    local function MoveToGrid(gx, gy)
-        if Core.Managers.MovementState then
-            local targetVec = Vector3.new(gx, gy, 0) * Core.Utils.TILE_SIZE
-            Core.Managers.MovementState.Position = targetVec
-            Core.Managers.MovementState.OldPosition = targetVec 
-            Core.Managers.MovementState.VelocityX, Core.Managers.MovementState.VelocityY = 0, 0
-        end
-    end
-
     local function HasBlock(gx, gy)
         if Core.Managers.WorldManager and Core.Managers.WorldManager.GetTile then
             for l = 1, 5 do if Core.Managers.WorldManager.GetTile(gx, gy, l) then return true end end
@@ -94,23 +85,53 @@ return function(Core)
         return false
     end
 
-    local function IsSaplingGrown(gx, gy, plantTime)
-        return (os.time() - plantTime) >= 60 
+    local function IsSaplingGrown(plantTime)
+        return (os.time() - plantTime) >= 60 -- Timer dummy: 60 detik
     end
 
-    -- [FIX] Menambahkan OldPosition dan sedikit delay agar server merespon loot
-    local function FastAutoLoot(radiusPos)
+    -- AUTO LOOT BERBASIS A* PATHFINDING (Diadopsi dari Genius Auto Loot)
+    local function SafeAutoLoot(radiusGridX, radiusGridY, moveSpeed)
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
-        if dropsFolder and Core.Managers.MovementState then
-            for _, item in ipairs(dropsFolder:GetChildren()) do
+        local itemsToLoot = {}
+        
+        if dropsFolder then
+            for _, v in ipairs(dropsFolder:GetChildren()) do
+                if (v:IsA("BasePart") or v:IsA("Model")) and not Core.Pathfinding.blacklistedItems[v] then 
+                    table.insert(itemsToLoot, v) 
+                end
+            end
+        else
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:IsA("BasePart") and not obj:IsDescendantOf(Core.LocalPlayer.Character) and not Core.Players:GetPlayerFromCharacter(obj.Parent) and obj.Size.Y < 3 and not Core.Pathfinding.blacklistedItems[obj] then 
+                    table.insert(itemsToLoot, obj) 
+                end
+            end
+        end
+
+        if #itemsToLoot > 0 then
+            -- Cari item yang masuk dalam radius sekitar titik panen (misal 15 grid)
+            local validItems = {}
+            for _, item in ipairs(itemsToLoot) do
                 local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
                 if part then
-                    local dist = (Vector2.new(part.Position.X, part.Position.Y) - Vector2.new(radiusPos.X, radiusPos.Y)).Magnitude
-                    if dist < (20 * Core.Utils.TILE_SIZE) then
-                        Core.Managers.MovementState.Position = part.Position
-                        Core.Managers.MovementState.OldPosition = part.Position
-                        Core.Managers.MovementState.VelocityX, Core.Managers.MovementState.VelocityY = 0, 0
-                        task.wait(0.1)
+                    local ex = math.floor(part.Position.X / Core.Utils.TILE_SIZE + 0.5)
+                    local ey = math.floor(part.Position.Y / Core.Utils.TILE_SIZE + 0.5)
+                    local dist = math.sqrt((ex - radiusGridX)^2 + (ey - radiusGridY)^2)
+                    
+                    if dist <= 15 then table.insert(validItems, {item = item, part = part, ex = ex, ey = ey, dist = dist}) end
+                end
+            end
+
+            table.sort(validItems, function(a, b) return a.dist < b.dist end)
+
+            for _, data in ipairs(validItems) do
+                if not Core.Toggles.autoPabrik then break end
+                
+                if Core.Pathfinding.isOutOfBounds(data.ex, data.ey) or Core.Pathfinding.isItemTrapped(data.ex, data.ey) then
+                    Core.Pathfinding.blacklistedItems[data.item] = true
+                else
+                    if not Core.Pathfinding.aiMoveTo(data.ex, data.ey, moveSpeed, "autoPabrik") then 
+                        Core.Pathfinding.blacklistedItems[data.item] = true 
                     end
                 end
             end
@@ -120,22 +141,21 @@ return function(Core)
     -- ==========================================
     -- MESIN WIKJOK: RUNTIME LOOP
     -- ==========================================
-    local engineActive = false
-
-    Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrikToggle", secControl, false, function(state)
-        engineActive = state
-        
-        if not engineActive then 
+    Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
+        if not state then 
             print("[NLight Pabrik] Sistem Dimatikan.")
+            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+            if hrp then hrp.Anchored = false end
             return 
         end
 
-        print("[NLight Pabrik] Sistem Dijalankan! Memulai Loop Tertutup.")
+        print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur Pathfinding...")
 
         task.spawn(function()
-            -- HRP Anchored sengaja DIHAPUS agar tidak tabrakan dengan Physics
+            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+            if hrp then hrp.Anchored = true end
 
-            while engineActive do
+            while Core.Toggles.autoPabrik do
                 local standX, standY = ParsePos(Core.Inputs["pabrikStandPos"] and Core.Inputs["pabrikStandPos"].Text or "0,0")
                 local farmX, farmY = ParsePos(Core.Inputs["pabrikBlockPos"] and Core.Inputs["pabrikBlockPos"].Text or "0,0")
                 local blockType = string.lower(Core.Inputs["pabrikBlockType"] and Core.Inputs["pabrikBlockType"].Text or "")
@@ -144,46 +164,44 @@ return function(Core)
                 local sEndX, sEndY = ParsePos(Core.Inputs["pabrikSapEnd"] and Core.Inputs["pabrikSapEnd"].Text or "0,0")
                 local sLimitY = tonumber(Core.Inputs["pabrikSapLimitY"] and Core.Inputs["pabrikSapLimitY"].Text) or sStartY
                 
-                local saplingType = Core.Toggles.pabrikSaplingType or "auto"
-                if saplingType == "auto" then saplingType = "dirt_sapling" end
+                local saplingType = Core.Toggles.pabrikSaplingType or "dirt_sapling"
                 saplingType = string.lower(saplingType)
 
-                -- [FIX] Membatasi BreakSpeed minimal 150ms agar server tidak lag
+                local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"] and Core.Inputs["pabrikWalkSpeed"].Text) or 45
                 local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
-                breakDelay = math.max(breakDelay, 0.15)
 
                 -- ==========================================
                 -- FASE 1: SMART AUTO FARM BLOCK
                 -- ==========================================
-                MoveToGrid(standX, standY)
-                task.wait(0.5)
-
-                while engineActive do
+                print("[WIKJOK] Memulai Fase 1: Smart Auto Farm Block")
+                
+                while Core.Toggles.autoPabrik do
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
+
+                    -- Pindah ke tempat berdiri menggunakan A* Pathfinding
+                    Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
+                    task.wait(0.1)
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
                         task.wait(0.1)
                     end
 
-                    -- [FIX] Anti-Stuck Timeout: Jika dipukul 50x ga hancur, skip (mungkin nge-bug)
-                    local hitCount = 0
-                    while HasBlock(farmX, farmY) and engineActive and hitCount < 50 do
+                    while HasBlock(farmX, farmY) and Core.Toggles.autoPabrik do
                         if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(farmX, farmY)) end
-                        hitCount = hitCount + 1
                         task.wait(breakDelay)
                     end
 
-                    FastAutoLoot(Vector3.new(farmX * Core.Utils.TILE_SIZE, farmY * Core.Utils.TILE_SIZE, 0))
-                    MoveToGrid(standX, standY)
+                    SafeAutoLoot(farmX, farmY, walkSpeed)
                 end
 
-                if not engineActive then break end
+                if not Core.Toggles.autoPabrik then break end
 
                 -- ==========================================
                 -- FASE 2: SMART AUTO FARM SAPLING
                 -- ==========================================
+                print("[WIKJOK] Block Habis! Memulai Fase 2: Smart Auto Farm Sapling")
                 local plantedSaplings = {}
                 local isOutOfSapling = false
                 
@@ -192,34 +210,39 @@ return function(Core)
 
                 -- [A] Tanam
                 for y = sStartY, sLimitY, loopStepY do
-                    if isOutOfSapling or not engineActive then break end
+                    if isOutOfSapling or not Core.Toggles.autoPabrik then break end
                     for x = sStartX, sEndX, loopStepX do
-                        if not engineActive then break end
+                        if not Core.Toggles.autoPabrik then break end
                         
                         local sCount, sSlot = GetItemSlotAndCount(saplingType, "sapling")
                         if sCount <= 0 then isOutOfSapling = true break end
                         
                         if not HasBlock(x, y) then
-                            MoveToGrid(x, y)
-                            task.wait(0.2) -- [FIX] Delay ekstra agar pergerakan halus
-                            if Core.Remotes.PlayerPlaceRemote then
-                                Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
-                                table.insert(plantedSaplings, {X = x, Y = y, Time = os.time()})
+                            -- Gunakan AI Pathfinding menuju grid tanam
+                            if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
                                 task.wait(0.1)
+                                if Core.Remotes.PlayerPlaceRemote then
+                                    Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
+                                    table.insert(plantedSaplings, {X = x, Y = y, Time = os.time()})
+                                    task.wait(0.1)
+                                end
+                            else
+                                -- Jika pathfinding gagal (stuck/terblokir), blacklist koordinat
+                                Core.Pathfinding.blacklistedSpots[x..","..y] = true
                             end
                         end
                     end
                 end
 
-                if not engineActive then break end
+                if not Core.Toggles.autoPabrik then break end
 
                 -- [B] Tunggu
                 if #plantedSaplings > 0 then
                     local allGrown = false
-                    while not allGrown and engineActive do
+                    while not allGrown and Core.Toggles.autoPabrik do
                         allGrown = true
                         for _, sapling in ipairs(plantedSaplings) do
-                            if not IsSaplingGrown(sapling.X, sapling.Y, sapling.Time) then
+                            if not IsSaplingGrown(sapling.Time) then
                                 allGrown = false
                                 break
                             end
@@ -228,22 +251,21 @@ return function(Core)
                     end
                 end
 
-                if not engineActive then break end
+                if not Core.Toggles.autoPabrik then break end
 
                 -- [C] Panen
                 for _, sapling in ipairs(plantedSaplings) do
-                    if not engineActive then break end
-                    MoveToGrid(sapling.X, sapling.Y)
-                    task.wait(0.2)
-
-                    -- [FIX] Anti-Stuck Timeout untuk Pohon
-                    local hitCount = 0
-                    while HasBlock(sapling.X, sapling.Y) and engineActive and hitCount < 80 do
-                        if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
-                        hitCount = hitCount + 1
-                        task.wait(breakDelay)
+                    if not Core.Toggles.autoPabrik then break end
+                    
+                    -- Gunakan AI Pathfinding menuju grid panen
+                    if Core.Pathfinding.aiMoveTo(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
+                        task.wait(0.1)
+                        while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
+                            if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
+                            task.wait(breakDelay)
+                        end
+                        SafeAutoLoot(sapling.X, sapling.Y, walkSpeed)
                     end
-                    FastAutoLoot(Vector3.new(sapling.X * Core.Utils.TILE_SIZE, sapling.Y * Core.Utils.TILE_SIZE, 0))
                 end
             end
         end)
