@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (A* PATHFINDING EDITION)
+    -- WIKJOK: AUTO PABRIK (A* PATHFINDING + SMART SKIP EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -86,10 +86,11 @@ return function(Core)
     end
 
     local function IsSaplingGrown(plantTime)
-        return (os.time() - plantTime) >= 60 -- Timer dummy: 60 detik
+        -- Timer dummy 60 detik. Bot akan diam menunggu timer ini jika pohon belum 60 detik ditanam.
+        return (os.time() - plantTime) >= 60 
     end
 
-    -- AUTO LOOT BERBASIS A* PATHFINDING (Diadopsi dari Genius Auto Loot)
+    -- AUTO LOOT BERBASIS A* PATHFINDING
     local function SafeAutoLoot(radiusGridX, radiusGridY, moveSpeed)
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
@@ -109,7 +110,6 @@ return function(Core)
         end
 
         if #itemsToLoot > 0 then
-            -- Cari item yang masuk dalam radius sekitar titik panen (misal 15 grid)
             local validItems = {}
             for _, item in ipairs(itemsToLoot) do
                 local part = item:IsA("BasePart") and item or (item:IsA("Model") and item.PrimaryPart)
@@ -211,11 +211,18 @@ return function(Core)
                 -- [A] Tanam
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
+                    
                     for x = sStartX, sEndX, loopStepX do
                         if not Core.Toggles.autoPabrik then break end
                         
                         local sCount, sSlot = GetItemSlotAndCount(saplingType, "sapling")
-                        if sCount <= 0 then isOutOfSapling = true break end
+                        
+                        -- LOGIKA SMART SKIP: Jika sapling habis, langsung berhenti nanam!
+                        if sCount <= 0 then 
+                            print("[WIKJOK] Sapling habis di tengah jalan! Langsung masuk ke fase panen.")
+                            isOutOfSapling = true 
+                            break 
+                        end
                         
                         if not HasBlock(x, y) then
                             -- Gunakan AI Pathfinding menuju grid tanam
@@ -227,7 +234,6 @@ return function(Core)
                                     task.wait(0.1)
                                 end
                             else
-                                -- Jika pathfinding gagal (stuck/terblokir), blacklist koordinat
                                 Core.Pathfinding.blacklistedSpots[x..","..y] = true
                             end
                         end
@@ -238,6 +244,7 @@ return function(Core)
 
                 -- [B] Tunggu
                 if #plantedSaplings > 0 then
+                    print(string.format("[WIKJOK] Menunggu %d Sapling Matang...", #plantedSaplings))
                     local allGrown = false
                     while not allGrown and Core.Toggles.autoPabrik do
                         allGrown = true
@@ -247,26 +254,37 @@ return function(Core)
                                 break
                             end
                         end
-                        if not allGrown then task.wait(2) end
+                        if not allGrown then task.wait(2) end -- Jangan dihapus, agar CPU tidak terbakar
                     end
                 end
 
                 if not Core.Toggles.autoPabrik then break end
 
                 -- [C] Panen
-                for _, sapling in ipairs(plantedSaplings) do
-                    if not Core.Toggles.autoPabrik then break end
-                    
-                    -- Gunakan AI Pathfinding menuju grid panen
-                    if Core.Pathfinding.aiMoveTo(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
-                        task.wait(0.1)
-                        while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
-                            if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
-                            task.wait(breakDelay)
+                if #plantedSaplings > 0 then
+                    print("[WIKJOK] Pohon Matang! Memulai Panen...")
+                    for _, sapling in ipairs(plantedSaplings) do
+                        if not Core.Toggles.autoPabrik then break end
+                        
+                        -- Gunakan AI Pathfinding menuju grid panen
+                        if Core.Pathfinding.aiMoveTo(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
+                            task.wait(0.1)
+                            while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
+                                if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
+                                task.wait(breakDelay)
+                            end
+                            SafeAutoLoot(sapling.X, sapling.Y, walkSpeed)
                         end
-                        SafeAutoLoot(sapling.X, sapling.Y, walkSpeed)
                     end
                 end
+
+                -- [D] ANTI-CRASH PROTECTION (Mencegah patah-patah kalau tas kosong)
+                local cekBlockLagi = GetItemSlotAndCount(blockType, "block")
+                if #plantedSaplings == 0 and cekBlockLagi <= 0 then
+                    print("[WIKJOK] Inventory Kosong (Block & Sapling Habis). Menunggu item masuk...")
+                    task.wait(2) -- Memberi nafas pada script sebelum mengulang loop
+                end
+
             end
         end)
     end)
