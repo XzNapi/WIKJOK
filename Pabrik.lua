@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (FLUID GLIDE & RARITY MATH EDITION)
+    -- WIKJOK: AUTO PABRIK (FLUID GLIDE + IGNORE GEM)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -31,6 +31,7 @@ return function(Core)
     Core.UI.createInputRow("Walk Speed", "45", secControl, 0.4, "pabrikWalkSpeed")
     Core.UI.createInputRow("Place Delay (ms)", "150", secControl, 0.4, "pabrikPlaceSpeed")
     Core.UI.createInputRow("Break Speed (ms)", "250", secControl, 0.4, "pabrikBreakSpeed")
+    Core.UI.createToggle("Ignore Gem Drops", "pabrikIgnoreGem", secControl, true) -- [BARU] Toggle Ignore Gem
     
     -- ==========================================
     -- FUNGSI UTILITAS PABRIK
@@ -123,13 +124,11 @@ return function(Core)
     -- SISTEM GLIDING & FLUID LOOT
     -- ==========================================
     
-    -- Bergerak mengalir (Lerp/Velocity math) lurus ke titik Vector3
     local function GlideTo(targetPos, moveSpeed)
         if not Core.Managers.MovementState then return false end
         local currentPos = Core.Managers.MovementState.Position
         local dist = (targetPos - currentPos).Magnitude
         
-        -- Meluncur perlahan tapi pasti, tidak mempedulikan Grid/A*
         while dist > 0.5 and Core.Toggles.autoPabrik do
             local dt = task.wait()
             local step = (targetPos - currentPos).Unit * moveSpeed * dt
@@ -148,21 +147,28 @@ return function(Core)
         return true
     end
 
-    -- Loot yang mengalir persis ke item drop (mengabaikan tengah blok)
     local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
         
+        -- [BARU] Logika filter pintar (Cek Blacklist & Status Ignore Gem)
+        local function isValidLoot(obj)
+            if Core.Pathfinding.blacklistedItems[obj] then return false end
+            -- Membaca nama item, jika mengandung kata 'gem' dan toggle menyala, abaikan item ini
+            if Core.Toggles.pabrikIgnoreGem and string.find(string.lower(obj.Name), "gem") then return false end
+            return true
+        end
+
         if dropsFolder then
             for _, v in ipairs(dropsFolder:GetChildren()) do
-                if (v:IsA("BasePart") or v:IsA("Model")) and not Core.Pathfinding.blacklistedItems[v] then 
+                if (v:IsA("BasePart") or v:IsA("Model")) and isValidLoot(v) then 
                     table.insert(itemsToLoot, v) 
                 end
             end
         else
             for _, obj in ipairs(workspace:GetChildren()) do
-                if obj:IsA("BasePart") and not obj:IsDescendantOf(Core.LocalPlayer.Character) and not Core.Players:GetPlayerFromCharacter(obj.Parent) and obj.Size.Y < 3 and not Core.Pathfinding.blacklistedItems[obj] then 
+                if obj:IsA("BasePart") and not obj:IsDescendantOf(Core.LocalPlayer.Character) and not Core.Players:GetPlayerFromCharacter(obj.Parent) and obj.Size.Y < 3 and isValidLoot(obj) then 
                     table.insert(itemsToLoot, obj) 
                 end
             end
@@ -178,15 +184,12 @@ return function(Core)
                     local itemVec = Vector2.new(part.Position.X, part.Position.Y)
                     local distFromCenter = (itemVec - centerVec).Magnitude
                     
-                    -- Konversi grid rad ke unit jarak fisik (TILE_SIZE)
                     if distFromCenter <= (rad * Core.Utils.TILE_SIZE) then 
                         table.insert(validItems, {item = item, part = part, pos = part.Position}) 
                     end
                 end
             end
 
-            -- Sort by urutan terdekat dengan Player, BUKAN terdekat dengan block!
-            -- Ini membuat loot mengalir dari satu item ke item lain seperti di-magnet.
             table.sort(validItems, function(a, b) 
                 if not Core.Managers.MovementState then return false end
                 local pPos = Core.Managers.MovementState.Position
@@ -204,7 +207,7 @@ return function(Core)
                 else
                     GlideTo(data.pos, moveSpeed)
                     StopMovement()
-                    task.wait(0.05) -- Nafas pungut sedikit
+                    task.wait(0.05)
                 end
             end
         end
@@ -252,11 +255,10 @@ return function(Core)
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
 
-                    -- [DIPERBARUI] Meluncur mengalir langsung ke titik stand, bukan pathfinding kaku
                     local targetStandVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
                     GlideTo(targetStandVec, walkSpeed)
                     StopMovement()
-                    task.wait(0.05) -- Nafas sejenak
+                    task.wait(0.05) 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
@@ -270,9 +272,8 @@ return function(Core)
                         brokeBlock = true
                     end
 
-                    if brokeBlock then task.wait(0.2) end -- Kasih server waktu drop item
+                    if brokeBlock then task.wait(0.2) end
 
-                    -- [DIPERBARUI] Looting mengalir seperti air
                     FluidAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
@@ -288,7 +289,7 @@ return function(Core)
                 local loopStepX = (sStartX <= sEndX) and 1 or -1
                 local loopStepY = (sStartY >= sLimitY) and -2 or 2 
 
-                -- [A] Tanam (Pohon pakai A* karena melewati Grid tertutup)
+                -- [A] Tanam
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
                     
