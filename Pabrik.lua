@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (SIDE BREAKER)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (PURE PHYSICS)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -132,35 +132,68 @@ return function(Core)
 
     local function StopMovement()
         if Core.Managers.MovementState then
-            Core.Managers.MovementState.VelocityX = 0; Core.Managers.MovementState.VelocityY = 0
-            Core.Managers.MovementState.MoveX = 0; Core.Managers.MovementState.MoveY = 0
+            Core.Managers.MovementState.VelocityX = 0
+            Core.Managers.MovementState.VelocityY = 0
+            Core.Managers.MovementState.MoveX = 0
+            Core.Managers.MovementState.MoveY = 0
         end
     end
 
-    local function SetHoverState(isHovering)
-        local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-        if hrp then
-            hrp.Anchored = isHovering
-            if isHovering then StopMovement() end
-        end
-    end
-
-    -- [DIPERBARUI] Cerdas mengambil posisi di Samping Kiri atau Kanan blok
-    local function StandBesideTarget(gx, gy, moveSpeed, modeKey, preferredStepX)
-        SetHoverState(false) -- Bebaskan karakter untuk jalan
+    -- [BARU] Pergerakan Murni Fisika untuk Berhenti Tepat di Tengah Blok
+    local function WalkToCenter(gx, gy, moveSpeed, modeKey)
+        if not Core.Managers.MovementState then return false end
+        local targetVec = Vector3.new(gx, gy, 0) * Core.Utils.TILE_SIZE
+        local timeout = 0
         
-        -- Tentukan arah prioritas (Default: Sebelah kiri blok)
+        -- Berjalan natural layaknya player menekan WASD
+        while Core.Toggles[modeKey] and timeout < 30 do
+            local currentPos = Core.Managers.MovementState.Position
+            local diff = targetVec - currentPos
+            local dist = diff.Magnitude
+            
+            -- Jika sudah berada di radius tengah blok (0.2), Rem total.
+            if dist <= 0.2 then
+                StopMovement()
+                return true
+            end
+            
+            -- Kurangi kecepatan secara natural jika sudah sangat dekat (Simulasi pengereman)
+            local currentSpeed = moveSpeed
+            if dist < 2.5 then 
+                currentSpeed = math.min(moveSpeed, 20) 
+            end
+            
+            local dir = diff.Unit
+            -- Ganti dorongan fisika, BUKAN merusak posisi koordinat
+            Core.Managers.MovementState.VelocityX = dir.X * currentSpeed
+            Core.Managers.MovementState.VelocityY = dir.Y * currentSpeed
+            
+            -- Picu animasi kaki berjalan
+            Core.Managers.MovementState.MoveX = math.sign(dir.X)
+            Core.Managers.MovementState.MoveY = math.sign(dir.Y)
+            
+            timeout = timeout + 1
+            task.wait(0.05)
+        end
+        
+        StopMovement()
+        return false
+    end
+
+    -- [DIPERBARUI] Cerdas mengambil posisi di Samping Kiri atau Kanan, lalu ke Tengah Blok
+    local function StandBesideTarget(gx, gy, moveSpeed, modeKey, preferredStepX)
         local dirX = preferredStepX or 1
         local side1 = gx - dirX 
         local side2 = gx + dirX 
         
-        -- Coba jalan ke sisi pertama
+        -- Langkah 1: Gunakan A* Pathfinding NLight untuk mencari jalan tanpa nabrak
         if Core.Pathfinding.aiMoveTo(side1, gy, moveSpeed, modeKey) then
-            SetHoverState(true) -- Kunci jangkar tepat di sebelah blok!
+            -- Langkah 2: Setelah dekat, sesuaikan langkah kaki agar berdiri PERSIS di TENGAH blok
+            WalkToCenter(side1, gy, moveSpeed, modeKey)
             return true
-        -- Jika sisi pertama ternyata terhalang, putar ke sisi sebaliknya
+        -- Jika sisi 1 buntu, putar ke sisi 2
         elseif Core.Pathfinding.aiMoveTo(side2, gy, moveSpeed, modeKey) then
-            SetHoverState(true) 
+            WalkToCenter(side2, gy, moveSpeed, modeKey)
             return true
         end
         
@@ -168,7 +201,6 @@ return function(Core)
     end
 
     local function NaturalAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
-        SetHoverState(false) -- Lepas jangkar agar bisa mungut item
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
@@ -218,8 +250,10 @@ return function(Core)
                 if Core.Pathfinding.isOutOfBounds(ex, ey) or Core.Pathfinding.isItemTrapped(ex, ey) then
                     Core.Pathfinding.blacklistedItems[data.item] = true
                 else
-                    Core.Pathfinding.aiMoveTo(ex, ey, moveSpeed, "autoPabrik")
-                    task.wait(0.05)
+                    -- Looting aman: Cari jalan pakai AI, lalu mendarat persis di tengah blok
+                    if Core.Pathfinding.aiMoveTo(ex, ey, moveSpeed, "autoPabrik") then
+                        WalkToCenter(ex, ey, moveSpeed, "autoPabrik")
+                    end
                 end
             end
         end
@@ -234,7 +268,6 @@ return function(Core)
     -- [1] MESIN AUTO PABRIK
     togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
         if not state then 
-            SetHoverState(false)
             print("[NLight Pabrik] Sistem Dimatikan.")
             return 
         end
@@ -244,7 +277,7 @@ return function(Core)
             if toggleClear then toggleClear() end 
         end
 
-        print("[NLight Pabrik] Sistem Dijalankan! Menggunakan Pergerakan Natural...")
+        print("[NLight Pabrik] Sistem Dijalankan! Berjalan natural ke tengah blok...")
 
         task.spawn(function()
             while Core.Toggles.autoPabrik do
@@ -270,9 +303,10 @@ return function(Core)
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
 
-                    SetHoverState(false)
-                    Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
-                    SetHoverState(true) -- Jangkar saat mukul 
+                    -- Menuju titik stand dan menyelaraskan ke tengah
+                    if Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik") then
+                        WalkToCenter(standX, standY, walkSpeed, "autoPabrik")
+                    end
                     task.wait(0.1) 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
@@ -316,9 +350,8 @@ return function(Core)
                         end
                         
                         if not HasBlock(x, y) then
-                            SetHoverState(false)
                             if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
-                                SetHoverState(true) 
+                                WalkToCenter(x, y, walkSpeed, "autoPabrik") -- Penyelarasan
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
                                     Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
@@ -352,13 +385,13 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat (BERDIRI DI SAMPING)
+                -- [C] Panen Eksekusi Cepat (BERDIRI NATURAL DI SAMPING POHON)
                 if #plantedSaplings > 0 then
                     print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        -- Menggunakan fungsi baru: Menuju ke KIRI atau KANAN pohon
+                        -- Berjalan mencari arah kosong, lalu memposisikan diri pas di tengah blok kosong tersebut
                         if StandBesideTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
                             task.wait(0.05)
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
@@ -393,7 +426,6 @@ return function(Core)
     -- [2] MESIN AUTO CLEAR WORLD
     toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
         if not state then 
-            SetHoverState(false)
             print("[NLight Clear] Auto Clear Dimatikan.")
             return 
         end
@@ -403,7 +435,7 @@ return function(Core)
             if togglePabrik then togglePabrik() end 
         end
 
-        print("[NLight Clear] Sistem Dijalankan! Meratakan Area...")
+        print("[NLight Clear] Sistem Dijalankan! Berjalan natural ke area target...")
 
         task.spawn(function()
             local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
@@ -424,7 +456,7 @@ return function(Core)
 
                     if HasTargetClearBlock(x, y, targetMode) then
                         
-                        -- Berhenti persis di sebelah blok menggunakan arah stepX
+                        -- Bergerak natural ke sebelah target, memposisikan diri tepat di tengah bloknya
                         if StandBesideTarget(x, y, walkSpeed, "autoClearWorld", stepX) then
                             task.wait(0.1)
 
@@ -449,7 +481,6 @@ return function(Core)
                 end
             end
 
-            SetHoverState(false)
             print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
             Core.Toggles.autoClearWorld = false
             if toggleClear then toggleClear() end 
