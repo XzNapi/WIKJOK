@@ -137,7 +137,6 @@ return function(Core)
         end
     end
 
-    -- Menjangkar karakter agar stabil saat memukul
     local function SetHoverState(isHovering)
         local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
         if hrp then
@@ -146,27 +145,25 @@ return function(Core)
         end
     end
 
-    -- [DIPERBARUI] Cerdas berdiri di SAMPING blok yang mau dipukul
-    local function StandBesideTarget(gx, gy, moveSpeed, modeKey)
-        SetHoverState(false) -- Lepas jangkar agar bisa jalan
+    -- [DIPERBARUI] Cerdas mengambil posisi di Samping Kiri atau Kanan blok
+    local function StandBesideTarget(gx, gy, moveSpeed, modeKey, preferredStepX)
+        SetHoverState(false) -- Bebaskan karakter untuk jalan
         
-        local standX = gx - 1 -- Default: berdiri di kiri blok
-        local standY = gy 
+        -- Tentukan arah prioritas (Default: Sebelah kiri blok)
+        local dirX = preferredStepX or 1
+        local side1 = gx - dirX 
+        local side2 = gx + dirX 
         
-        -- Kalkulasi dinamis: Jika player ada di kanan blok, berdirilah di kanan
-        local hrp = Core.LocalPlayer.Character and Core.LocalPlayer.Character.PrimaryPart
-        if hrp then
-            local pGridX = hrp.Position.X / Core.Utils.TILE_SIZE
-            if pGridX > gx then
-                standX = gx + 1 -- Berdiri di kanan
-            end
-        end
-        
-        -- Jalan natural menggunakan A* Pathfinding bawaan
-        if Core.Pathfinding.aiMoveTo(standX, standY, moveSpeed, modeKey) then
-            SetHoverState(true) -- Jangkar agar tidak terpental/geser saat memukul
+        -- Coba jalan ke sisi pertama
+        if Core.Pathfinding.aiMoveTo(side1, gy, moveSpeed, modeKey) then
+            SetHoverState(true) -- Kunci jangkar tepat di sebelah blok!
+            return true
+        -- Jika sisi pertama ternyata terhalang, putar ke sisi sebaliknya
+        elseif Core.Pathfinding.aiMoveTo(side2, gy, moveSpeed, modeKey) then
+            SetHoverState(true) 
             return true
         end
+        
         return false
     end
 
@@ -206,7 +203,6 @@ return function(Core)
                 end
             end
 
-            -- Urutkan dari item terdekat ke karakter
             table.sort(validItems, function(a, b) 
                 local hrp = Core.LocalPlayer.Character and Core.LocalPlayer.Character.PrimaryPart
                 if not hrp then return false end
@@ -276,7 +272,7 @@ return function(Core)
 
                     SetHoverState(false)
                     Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
-                    SetHoverState(true)
+                    SetHoverState(true) -- Jangkar saat mukul 
                     task.wait(0.1) 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
@@ -321,9 +317,8 @@ return function(Core)
                         
                         if not HasBlock(x, y) then
                             SetHoverState(false)
-                            -- Jalan natural ke titik tanam (karena titik tanam biasanya kosong)
                             if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
-                                SetHoverState(true)
+                                SetHoverState(true) 
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
                                     Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
@@ -357,13 +352,13 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat (BERDIRI DI SAMPING POHON)
+                -- [C] Panen Eksekusi Cepat (BERDIRI DI SAMPING)
                 if #plantedSaplings > 0 then
-                    print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari samping...")
+                    print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        -- Cerdas mencari samping pohon yang kosong
+                        -- Menggunakan fungsi baru: Menuju ke KIRI atau KANAN pohon
                         if StandBesideTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
                             task.wait(0.05)
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
@@ -428,8 +423,9 @@ return function(Core)
                     if not Core.Toggles.autoClearWorld then break end
 
                     if HasTargetClearBlock(x, y, targetMode) then
-                        -- Jalan natural ke SAMPING blok, lalu jangkarkan
-                        if StandBesideTarget(x, y, walkSpeed, "autoClearWorld") then
+                        
+                        -- Berhenti persis di sebelah blok menggunakan arah stepX
+                        if StandBesideTarget(x, y, walkSpeed, "autoClearWorld", stepX) then
                             task.wait(0.1)
 
                             local hitCount = 0
