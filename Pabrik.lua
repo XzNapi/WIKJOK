@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & AUTO CLEAR WORLD EDITION
+    -- WIKJOK: AUTO PABRIK & SMART CLEAR WORLD
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -34,14 +34,15 @@ return function(Core)
 
     local togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false)
 
-    -- [BARU] UI SETUP: AUTO CLEAR WORLD
+    -- UI SETUP: AUTO CLEAR WORLD
     local secClear = Core.UI.createSection(page, "5. Auto Clear World")
     Core.UI.createInputRow("Titik Sudut Awal [X,Y]", "0,0", secClear, 0.4, "clearStartPos")
     Core.UI.createInputRow("Titik Sudut Akhir [X,Y]", "20,20", secClear, 0.4, "clearEndPos")
+    Core.UI.createInputRow("Target (solid/bg/all)", "all", secClear, 0.4, "clearTargetMode")
     local toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false)
     
     -- ==========================================
-    -- FUNGSI UTILITAS UMUM
+    -- FUNGSI UTILITAS PABRIK & CLEAR WORLD
     -- ==========================================
     local function ParsePos(text)
         if not text then return 0, 0 end
@@ -94,12 +95,27 @@ return function(Core)
         return false
     end
 
-    -- Khusus untuk Auto Clear: Hanya deteksi Layer 1 (Foreground/Block solid)
-    local function HasForegroundBlock(gx, gy)
-        if Core.Managers.WorldManager and Core.Managers.WorldManager.GetTile then
+    -- [BARU] FUNGSI FILTER LAYER (SOLID VS BACKGROUND)
+    local function HasTargetClearBlock(gx, gy, mode)
+        if not Core.Managers.WorldManager or not Core.Managers.WorldManager.GetTile then return false end
+        mode = string.lower(mode)
+        
+        if mode == "solid" then
+            -- Hanya cek Layer 1 (Foreground)
             return Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil
+        elseif mode == "bg" then
+            -- Hanya cek Layer 2 sampai 5 (Background)
+            for l = 2, 5 do
+                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end
+            end
+            return false
+        else
+            -- Mode "all": Cek semua Layer (Ratakan sampai bersih total)
+            for l = 1, 5 do
+                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end
+            end
+            return false
         end
-        return false
     end
 
     local function IsSaplingGrown(gx, gy, plantTime, saplingId)
@@ -123,10 +139,8 @@ return function(Core)
 
     local function StopMovement()
         if Core.Managers.MovementState then
-            Core.Managers.MovementState.VelocityX = 0
-            Core.Managers.MovementState.VelocityY = 0
-            Core.Managers.MovementState.MoveX = 0
-            Core.Managers.MovementState.MoveY = 0
+            Core.Managers.MovementState.VelocityX = 0; Core.Managers.MovementState.VelocityY = 0
+            Core.Managers.MovementState.MoveX = 0; Core.Managers.MovementState.MoveY = 0
             Core.Managers.MovementState.OldPosition = Core.Managers.MovementState.Position
         end
     end
@@ -213,7 +227,7 @@ return function(Core)
     end
 
     -- ==========================================
-    -- [BARU] MESIN WIKJOK: AUTO CLEAR WORLD
+    -- MESIN WIKJOK: AUTO CLEAR WORLD
     -- ==========================================
     toggleClear(false, function(state)
         if not state then 
@@ -223,11 +237,7 @@ return function(Core)
             return 
         end
 
-        -- Matikan Pabrik jika sedang nyala agar tidak bentrok
-        if Core.Toggles.autoPabrik then
-            Core.Toggles.autoPabrik = false
-            togglePabrik() -- Update visual toggle
-        end
+        if Core.Toggles.autoPabrik then Core.Toggles.autoPabrik = false; togglePabrik() end
 
         print("[NLight Clear] Sistem Dijalankan! Meratakan Area...")
 
@@ -237,11 +247,11 @@ return function(Core)
 
             local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
             local endX, endY = ParsePos(Core.Inputs["clearEndPos"] and Core.Inputs["clearEndPos"].Text or "0,0")
+            local targetMode = Core.Inputs["clearTargetMode"] and Core.Inputs["clearTargetMode"].Text or "all"
             
             local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"] and Core.Inputs["pabrikWalkSpeed"].Text) or 45
             local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
 
-            -- Tentukan arah sapuan (Kiri/Kanan, Atas/Bawah)
             local stepX = (startX <= endX) and 1 or -1
             local stepY = (startY <= endY) and 1 or -1
 
@@ -251,46 +261,45 @@ return function(Core)
                 for x = startX, endX, stepX do
                     if not Core.Toggles.autoClearWorld then break end
 
-                    -- Hanya break jika ada blok foreground (Layer 1)
-                    if HasForegroundBlock(x, y) then
+                    -- Cek apakah tile tersebut memiliki target (sesuai mode)
+                    if HasTargetClearBlock(x, y, targetMode) then
                         if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoClearWorld") then
                             StopMovement()
                             task.wait(0.1)
 
                             local hitCount = 0
-                            local maxHits = 50 -- ANTI-BEDROCK: Jika dipukul 50x gak hancur, skip!
+                            local maxHits = 50 -- ANTI-BEDROCK & WHITE BLOCK
 
-                            while HasForegroundBlock(x, y) and Core.Toggles.autoClearWorld do
+                            while HasTargetClearBlock(x, y, targetMode) and Core.Toggles.autoClearWorld do
                                 if Core.Remotes.PlayerFistRemote then 
                                     Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(x, y)) 
                                 end
                                 
                                 hitCount = hitCount + 1
                                 if hitCount > maxHits then
-                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] terlalu keras (Bedrock). Melewati...", x, y))
+                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] kebal (Bedrock). Melewati...", x, y))
                                     break
                                 end
                                 
                                 task.wait(breakDelay)
                             end
 
-                            -- Loot setiap kali habis break satu blok agar item tidak hilang kena despawn
+                            -- Loot otomatis agar game tidak ngelag penuh sampah item
                             FluidAutoLoot(x, y, walkSpeed, 5)
                         end
                     end
                 end
             end
 
-            print("[NLight Clear] Selesai meratakan area!")
+            print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
             Core.Toggles.autoClearWorld = false
-            toggleClear() -- Matikan toggle UI otomatis
-            
+            toggleClear() 
             if hrp then hrp.Anchored = false end
         end)
     end)
 
     -- ==========================================
-    -- MESIN WIKJOK: AUTO PABRIK LOOP (TETAP SAMA)
+    -- MESIN WIKJOK: AUTO PABRIK LOOP
     -- ==========================================
     togglePabrik(false, function(state)
         if not state then 
@@ -300,11 +309,7 @@ return function(Core)
             return 
         end
 
-        -- Matikan Auto Clear jika sedang nyala agar tidak bentrok
-        if Core.Toggles.autoClearWorld then
-            Core.Toggles.autoClearWorld = false
-            toggleClear()
-        end
+        if Core.Toggles.autoClearWorld then Core.Toggles.autoClearWorld = false; toggleClear() end
 
         print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
 
@@ -328,9 +333,7 @@ return function(Core)
                 local placeDelay = (tonumber(Core.Inputs["pabrikPlaceSpeed"] and Core.Inputs["pabrikPlaceSpeed"].Text) or 150) / 1000
                 local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
 
-                -- ==========================================
                 -- FASE 1: SMART AUTO FARM BLOCK
-                -- ==========================================
                 print("[WIKJOK] Memulai Fase 1: Smart Auto Farm Block")
                 
                 while Core.Toggles.autoPabrik do
@@ -361,9 +364,7 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- ==========================================
                 -- FASE 2: SMART AUTO FARM SAPLING
-                -- ==========================================
                 print("[WIKJOK] Block Habis! Memulai Fase 2: Smart Auto Farm Sapling")
                 local plantedSaplings = {}
                 local isOutOfSapling = false
@@ -374,7 +375,6 @@ return function(Core)
                 -- [A] Tanam 
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
-                    
                     for x = sStartX, sEndX, loopStepX do
                         if not Core.Toggles.autoPabrik then break end
                         
@@ -439,7 +439,6 @@ return function(Core)
                     
                     if not Core.Toggles.autoPabrik then break end
 
-                    -- [C.2] Mass Sweeping Loot Fluid
                     print("[WIKJOK] Penghancuran Selesai! Memungut semua item hasil panen...")
                     task.wait(0.5)
                     
@@ -456,7 +455,6 @@ return function(Core)
                     print("[WIKJOK] Inventory Kosong (Block & Sapling Habis). Menunggu item masuk...")
                     task.wait(2)
                 end
-
             end
         end)
     end)
