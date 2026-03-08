@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & SMART CLEAR WORLD
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR WORLD
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -38,7 +38,7 @@ return function(Core)
     local secClear = Core.UI.createSection(page, "5. Auto Clear World")
     Core.UI.createInputRow("Titik Sudut Awal [X,Y]", "0,0", secClear, 0.4, "clearStartPos")
     Core.UI.createInputRow("Titik Sudut Akhir [X,Y]", "20,20", secClear, 0.4, "clearEndPos")
-    Core.UI.createInputRow("Target (solid/bg/all)", "all", secClear, 0.4, "clearTargetMode")
+    Core.UI.createInputRow("Target (solid, bg, all)", "solid, bg", secClear, 0.4, "clearTargetMode")
     local toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false)
     
     -- ==========================================
@@ -95,27 +95,36 @@ return function(Core)
         return false
     end
 
-    -- [BARU] FUNGSI FILTER LAYER (SOLID VS BACKGROUND)
+    -- [DIPERBARUI] FUNGSI FILTER COMBO TARGET (SOLID, BG, ALL)
     local function HasTargetClearBlock(gx, gy, mode)
         if not Core.Managers.WorldManager or not Core.Managers.WorldManager.GetTile then return false end
         mode = string.lower(mode)
         
-        if mode == "solid" then
-            -- Hanya cek Layer 1 (Foreground)
-            return Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil
-        elseif mode == "bg" then
-            -- Hanya cek Layer 2 sampai 5 (Background)
-            for l = 2, 5 do
-                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end
-            end
-            return false
-        else
-            -- Mode "all": Cek semua Layer (Ratakan sampai bersih total)
-            for l = 1, 5 do
-                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end
-            end
-            return false
+        local targetSolid = string.find(mode, "solid")
+        local targetBg = string.find(mode, "bg")
+        local targetAll = string.find(mode, "all")
+        
+        -- Jika input "all" atau kosong, otomatis targetkan semuanya
+        if targetAll or mode == "" then
+            targetSolid = true
+            targetBg = true
         end
+        
+        -- Cek Layer 1 (Solid)
+        if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then
+            return true
+        end
+        
+        -- Cek Layer 2 sampai 5 (Background)
+        if targetBg then
+            for l = 2, 5 do
+                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then 
+                    return true 
+                end
+            end
+        end
+        
+        return false
     end
 
     local function IsSaplingGrown(gx, gy, plantTime, saplingId)
@@ -261,7 +270,7 @@ return function(Core)
                 for x = startX, endX, stepX do
                     if not Core.Toggles.autoClearWorld then break end
 
-                    -- Cek apakah tile tersebut memiliki target (sesuai mode)
+                    -- Cek target dengan Combo String
                     if HasTargetClearBlock(x, y, targetMode) then
                         if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoClearWorld") then
                             StopMovement()
@@ -284,7 +293,6 @@ return function(Core)
                                 task.wait(breakDelay)
                             end
 
-                            -- Loot otomatis agar game tidak ngelag penuh sampah item
                             FluidAutoLoot(x, y, walkSpeed, 5)
                         end
                     end
