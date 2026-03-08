@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (NATURAL MOVEMENT)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (SIDE BREAKER)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -137,7 +137,7 @@ return function(Core)
         end
     end
 
-    -- [DIPERBARUI] Melayang Natural menggunakan Physics Anchor, BUKAN merusak Position
+    -- Menjangkar karakter agar stabil saat memukul
     local function SetHoverState(isHovering)
         local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
         if hrp then
@@ -146,21 +146,30 @@ return function(Core)
         end
     end
 
-    -- [DIPERBARUI] Berdiri di atas menggunakan A* Pathfinding bawaan
-    local function StandAboveTarget(gx, gy, moveSpeed, modeKey)
-        SetHoverState(false) -- Lepas jangkar agar bisa jalan natural
+    -- [DIPERBARUI] Cerdas berdiri di SAMPING blok yang mau dipukul
+    local function StandBesideTarget(gx, gy, moveSpeed, modeKey)
+        SetHoverState(false) -- Lepas jangkar agar bisa jalan
         
-        local standX = gx
-        local standY = gy + 1 
+        local standX = gx - 1 -- Default: berdiri di kiri blok
+        local standY = gy 
         
+        -- Kalkulasi dinamis: Jika player ada di kanan blok, berdirilah di kanan
+        local hrp = Core.LocalPlayer.Character and Core.LocalPlayer.Character.PrimaryPart
+        if hrp then
+            local pGridX = hrp.Position.X / Core.Utils.TILE_SIZE
+            if pGridX > gx then
+                standX = gx + 1 -- Berdiri di kanan
+            end
+        end
+        
+        -- Jalan natural menggunakan A* Pathfinding bawaan
         if Core.Pathfinding.aiMoveTo(standX, standY, moveSpeed, modeKey) then
-            SetHoverState(true) -- Kunci jangkar agar tidak jatuh ke bawah
+            SetHoverState(true) -- Jangkar agar tidak terpental/geser saat memukul
             return true
         end
         return false
     end
 
-    -- [DIPERBARUI] Looting aman menggunakan A* Pathfinding bawaan NLight
     local function NaturalAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
         SetHoverState(false) -- Lepas jangkar agar bisa mungut item
         local rad = customRadius or 15
@@ -197,7 +206,7 @@ return function(Core)
                 end
             end
 
-            -- Sort item dari yang terdekat dengan karakter
+            -- Urutkan dari item terdekat ke karakter
             table.sort(validItems, function(a, b) 
                 local hrp = Core.LocalPlayer.Character and Core.LocalPlayer.Character.PrimaryPart
                 if not hrp then return false end
@@ -213,7 +222,6 @@ return function(Core)
                 if Core.Pathfinding.isOutOfBounds(ex, ey) or Core.Pathfinding.isItemTrapped(ex, ey) then
                     Core.Pathfinding.blacklistedItems[data.item] = true
                 else
-                    -- Jalan santai ke arah item
                     Core.Pathfinding.aiMoveTo(ex, ey, moveSpeed, "autoPabrik")
                     task.wait(0.05)
                 end
@@ -266,7 +274,6 @@ return function(Core)
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
 
-                    -- Jalan natural ke titik berdiri, lalu jangkar agar tidak terdorong
                     SetHoverState(false)
                     Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
                     SetHoverState(true)
@@ -286,7 +293,6 @@ return function(Core)
 
                     if brokeBlock then task.wait(0.2) end
 
-                    -- Pungut loot dengan natural
                     NaturalAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
@@ -315,8 +321,9 @@ return function(Core)
                         
                         if not HasBlock(x, y) then
                             SetHoverState(false)
+                            -- Jalan natural ke titik tanam (karena titik tanam biasanya kosong)
                             if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
-                                SetHoverState(true) -- Jangkar saat nanam
+                                SetHoverState(true)
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
                                     Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
@@ -350,13 +357,14 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat (MELAYANG NATURAL DI ATAS POHON)
+                -- [C] Panen Eksekusi Cepat (BERDIRI DI SAMPING POHON)
                 if #plantedSaplings > 0 then
-                    print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari atas...")
+                    print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari samping...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        if StandAboveTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
+                        -- Cerdas mencari samping pohon yang kosong
+                        if StandBesideTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
                             task.wait(0.05)
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
@@ -420,8 +428,8 @@ return function(Core)
                     if not Core.Toggles.autoClearWorld then break end
 
                     if HasTargetClearBlock(x, y, targetMode) then
-                        -- Bergerak natural ke atas blok, lalu dijangkar
-                        if StandAboveTarget(x, y, walkSpeed, "autoClearWorld") then
+                        -- Jalan natural ke SAMPING blok, lalu jangkarkan
+                        if StandBesideTarget(x, y, walkSpeed, "autoClearWorld") then
                             task.wait(0.1)
 
                             local hitCount = 0
