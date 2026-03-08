@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (ULTRA-FLUID & ANTI-GRAVITY)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (NATURAL MOVEMENT)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -39,21 +39,6 @@ return function(Core)
     Core.UI.createInputRow("Target (solid, bg, all)", "solid, bg", secClear, 0.4, "clearTargetMode")
     
     -- ==========================================
-    -- MESIN ANTI-GRAVITASI (HEARTBEAT HOVER LOCK)
-    -- ==========================================
-    local HoverLockVec = nil
-    local RunService = game:GetService("RunService")
-    
-    -- Loop 60 FPS ini akan menahan karakter di udara tanpa memicu anti-cheat
-    RunService.Heartbeat:Connect(function()
-        if HoverLockVec and Core.Managers.MovementState then
-            Core.Managers.MovementState.Position = HoverLockVec
-            Core.Managers.MovementState.VelocityY = 0
-            Core.Managers.MovementState.VelocityX = 0
-        end
-    end)
-
-    -- ==========================================
     -- FUNGSI UTILITAS PABRIK & CLEAR WORLD
     -- ==========================================
     local function ParsePos(text)
@@ -65,6 +50,7 @@ return function(Core)
     local function GetItemSlotAndCount(targetName, expectedType)
         local count, targetSlot = 0, nil
         targetName = string.lower(targetName)
+        
         if Core.Managers.InventoryModule and Core.Managers.InventoryModule.Stacks then
             for i = 1, (Core.Managers.InventoryModule.MaxSlots or 100) do
                 local stack = Core.Managers.InventoryModule.Stacks[i]
@@ -74,10 +60,12 @@ return function(Core)
                     if Core.Managers.ItemsManager and Core.Managers.ItemsManager.ItemsData[stack.Id] then
                         nameStr = string.lower(tostring(Core.Managers.ItemsManager.ItemsData[stack.Id].Name or idStr))
                     end
+                    
                     local isMatch = false
                     if expectedType == "block" then
                         if (string.find(idStr, targetName) or string.find(nameStr, targetName)) 
-                           and not string.find(idStr, "_sapling") and not string.find(idStr, "_background") then
+                           and not string.find(idStr, "_sapling") 
+                           and not string.find(idStr, "_background") then
                             isMatch = true
                         end
                     elseif expectedType == "sapling" then
@@ -86,6 +74,7 @@ return function(Core)
                             isMatch = true
                         end
                     end
+                    
                     if isMatch then
                         count = count + stack.Amount
                         if not targetSlot then targetSlot = i end
@@ -106,11 +95,15 @@ return function(Core)
     local function HasTargetClearBlock(gx, gy, mode)
         if not Core.Managers.WorldManager or not Core.Managers.WorldManager.GetTile then return false end
         mode = string.lower(mode)
+        
         local targetSolid = string.find(mode, "solid")
         local targetBg = string.find(mode, "bg")
         local targetAll = string.find(mode, "all")
         
-        if targetAll or mode == "" then targetSolid = true; targetBg = true end
+        if targetAll or mode == "" then
+            targetSolid = true; targetBg = true
+        end
+        
         if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then return true end
         if targetBg then
             for l = 2, 5 do if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end end
@@ -124,13 +117,17 @@ return function(Core)
             local itemData = Core.Managers.ItemsManager.ItemsData[saplingId]
             if itemData and itemData.Rarity then rarity = itemData.Rarity end
         end
+
         local requiredGrowTime = (rarity * rarity * rarity) + (rarity * 30)
         local serverPlantedAt = plantTime
+
         if Core.Managers.WorldManager and Core.Managers.WorldManager.GetTile then
             local tileId, tileMeta = Core.Managers.WorldManager.GetTile(gx, gy, 1)
             if type(tileMeta) == "table" and tileMeta.at then serverPlantedAt = tileMeta.at end
         end
-        return (workspace:GetServerTimeNow() - serverPlantedAt) >= requiredGrowTime
+
+        local currentTime = workspace:GetServerTimeNow()
+        return (currentTime - serverPlantedAt) >= requiredGrowTime
     end
 
     local function StopMovement()
@@ -140,56 +137,32 @@ return function(Core)
         end
     end
 
-    -- [DIPERBARUI] Fluid Glide menggunakan Heartbeat (Sangat Halus, Anti Rubberband)
-    local function GlideTo(targetPos, moveSpeed)
-        if not Core.Managers.MovementState then return false end
-        local safeSpeed = math.min(moveSpeed, 45) 
-        
-        while true do
-            if not Core.Toggles.autoPabrik and not Core.Toggles.autoClearWorld then break end
-            
-            local currentPos = Core.Managers.MovementState.Position
-            local dist = (targetPos - currentPos).Magnitude
-            
-            if dist <= 0.1 then 
-                Core.Managers.MovementState.Position = targetPos
-                break 
-            end
-            
-            local dt = RunService.Heartbeat:Wait() -- Bergerak berdasarkan framerate
-            local step = (targetPos - currentPos).Unit * safeSpeed * dt
-            
-            if step.Magnitude >= dist then
-                Core.Managers.MovementState.Position = targetPos
-                break
-            else
-                Core.Managers.MovementState.Position = currentPos + step
-            end
+    -- [DIPERBARUI] Melayang Natural menggunakan Physics Anchor, BUKAN merusak Position
+    local function SetHoverState(isHovering)
+        local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+        if hrp then
+            hrp.Anchored = isHovering
+            if isHovering then StopMovement() end
         end
-        return true
     end
 
-    -- [DIPERBARUI] Mendekati dan berdiri presisi di atas blok (Y+1)
+    -- [DIPERBARUI] Berdiri di atas menggunakan A* Pathfinding bawaan
     local function StandAboveTarget(gx, gy, moveSpeed, modeKey)
-        if not Core.Managers.MovementState then return false, nil end
+        SetHoverState(false) -- Lepas jangkar agar bisa jalan natural
         
-        -- Posisi aman: Tepat 1 blok di atas target
         local standX = gx
         local standY = gy + 1 
-        local targetVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
         
-        -- 1. Gunakan pathfinding untuk mencari rute terdekat ke grid tersebut
-        Core.Pathfinding.aiMoveTo(standX, standY, math.min(moveSpeed, 45), modeKey)
-        
-        -- 2. Gunakan Fluid Glide untuk memposisikan diri PERSIS di titik tengah grid
-        -- Ini mencegah karakter nyangkut di pinggiran blok
-        GlideTo(targetVec, math.min(moveSpeed, 45))
-        StopMovement()
-        
-        return true, targetVec
+        if Core.Pathfinding.aiMoveTo(standX, standY, moveSpeed, modeKey) then
+            SetHoverState(true) -- Kunci jangkar agar tidak jatuh ke bawah
+            return true
+        end
+        return false
     end
 
-    local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
+    -- [DIPERBARUI] Looting aman menggunakan A* Pathfinding bawaan NLight
+    local function NaturalAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
+        SetHoverState(false) -- Lepas jangkar agar bisa mungut item
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
@@ -217,16 +190,18 @@ return function(Core)
                 if part then
                     local itemVec = Vector2.new(part.Position.X, part.Position.Y)
                     local distFromCenter = (itemVec - centerVec).Magnitude
+                    
                     if distFromCenter <= (rad * Core.Utils.TILE_SIZE) then 
                         table.insert(validItems, {item = item, part = part, pos = part.Position}) 
                     end
                 end
             end
 
+            -- Sort item dari yang terdekat dengan karakter
             table.sort(validItems, function(a, b) 
-                if not Core.Managers.MovementState then return false end
-                local pPos = Core.Managers.MovementState.Position
-                return (a.pos - pPos).Magnitude < (b.pos - pPos).Magnitude 
+                local hrp = Core.LocalPlayer.Character and Core.LocalPlayer.Character.PrimaryPart
+                if not hrp then return false end
+                return (a.pos - hrp.Position).Magnitude < (b.pos - hrp.Position).Magnitude 
             end)
 
             for _, data in ipairs(validItems) do
@@ -238,8 +213,8 @@ return function(Core)
                 if Core.Pathfinding.isOutOfBounds(ex, ey) or Core.Pathfinding.isItemTrapped(ex, ey) then
                     Core.Pathfinding.blacklistedItems[data.item] = true
                 else
-                    GlideTo(data.pos, moveSpeed)
-                    StopMovement()
+                    -- Jalan santai ke arah item
+                    Core.Pathfinding.aiMoveTo(ex, ey, moveSpeed, "autoPabrik")
                     task.wait(0.05)
                 end
             end
@@ -255,7 +230,7 @@ return function(Core)
     -- [1] MESIN AUTO PABRIK
     togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
         if not state then 
-            HoverLockVec = nil -- Bebaskan karakter
+            SetHoverState(false)
             print("[NLight Pabrik] Sistem Dimatikan.")
             return 
         end
@@ -265,7 +240,7 @@ return function(Core)
             if toggleClear then toggleClear() end 
         end
 
-        print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
+        print("[NLight Pabrik] Sistem Dijalankan! Menggunakan Pergerakan Natural...")
 
         task.spawn(function()
             while Core.Toggles.autoPabrik do
@@ -291,9 +266,11 @@ return function(Core)
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
 
-                    -- Berdiri di atas titik Stand
-                    local success, lockPos = StandAboveTarget(standX, standY - 1, walkSpeed, "autoPabrik")
-                    if success then HoverLockVec = lockPos end
+                    -- Jalan natural ke titik berdiri, lalu jangkar agar tidak terdorong
+                    SetHoverState(false)
+                    Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
+                    SetHoverState(true)
+                    task.wait(0.1) 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
@@ -309,8 +286,8 @@ return function(Core)
 
                     if brokeBlock then task.wait(0.2) end
 
-                    HoverLockVec = nil -- Lepas hover untuk mungut
-                    FluidAutoLoot(farmX, farmY, walkSpeed, 5)
+                    -- Pungut loot dengan natural
+                    NaturalAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
                 if not Core.Toggles.autoPabrik then break end
@@ -337,8 +314,9 @@ return function(Core)
                         end
                         
                         if not HasBlock(x, y) then
-                            if Core.Pathfinding.aiMoveTo(x, y, math.min(walkSpeed, 45), "autoPabrik") then
-                                StopMovement()
+                            SetHoverState(false)
+                            if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
+                                SetHoverState(true) -- Jangkar saat nanam
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
                                     Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
@@ -372,22 +350,18 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat
+                -- [C] Panen Eksekusi Cepat (MELAYANG NATURAL DI ATAS POHON)
                 if #plantedSaplings > 0 then
                     print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari atas...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        local success, lockPos = StandAboveTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik")
-                        if success and lockPos then
-                            HoverLockVec = lockPos -- Kunci melayang di atas pohon
+                        if StandAboveTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
                             task.wait(0.05)
-                            
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
                                 task.wait(breakDelay)
                             end
-                            HoverLockVec = nil -- Lepas melayang
                         end
                     end
                     
@@ -395,10 +369,12 @@ return function(Core)
 
                     print("[WIKJOK] Penghancuran Selesai! Memungut semua item hasil panen...")
                     task.wait(0.5)
+                    
                     local centerX = (sStartX + sEndX) / 2
                     local centerY = (sStartY + sLimitY) / 2
                     local fieldRadius = math.max(math.abs(sStartX - sEndX), math.abs(sStartY - sLimitY)) + 10
-                    FluidAutoLoot(centerX, centerY, walkSpeed, fieldRadius)
+                    
+                    NaturalAutoLoot(centerX, centerY, walkSpeed, fieldRadius)
                 end
 
                 -- [D] ANTI-CRASH PROTECTION
@@ -414,7 +390,7 @@ return function(Core)
     -- [2] MESIN AUTO CLEAR WORLD
     toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
         if not state then 
-            HoverLockVec = nil -- Bebaskan karakter
+            SetHoverState(false)
             print("[NLight Clear] Auto Clear Dimatikan.")
             return 
         end
@@ -444,12 +420,9 @@ return function(Core)
                     if not Core.Toggles.autoClearWorld then break end
 
                     if HasTargetClearBlock(x, y, targetMode) then
-                        
-                        -- Berdiri di atas blok & Aktifkan Anti-Gravitasi
-                        local success, lockPos = StandAboveTarget(x, y, walkSpeed, "autoClearWorld")
-                        if success and lockPos then
-                            HoverLockVec = lockPos 
-                            task.wait(0.05)
+                        -- Bergerak natural ke atas blok, lalu dijangkar
+                        if StandAboveTarget(x, y, walkSpeed, "autoClearWorld") then
+                            task.wait(0.1)
 
                             local hitCount = 0
                             local maxHits = 50 
@@ -467,13 +440,12 @@ return function(Core)
                                 
                                 task.wait(breakDelay)
                             end
-                            HoverLockVec = nil -- Lepas gravitasi untuk pindah
                         end
                     end
                 end
             end
 
-            HoverLockVec = nil
+            SetHoverState(false)
             print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
             Core.Toggles.autoClearWorld = false
             if toggleClear then toggleClear() end 
