@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK (FLUID GLIDE & RARITY MATH EDITION)
+    -- WIKJOK: AUTO PABRIK & AUTO CLEAR WORLD EDITION
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -26,14 +26,22 @@ return function(Core)
         return string.find(n, "sapling") or string.find(id, "sapling")
     end)
 
-    -- UI SETUP: Pengaturan & Eksekusi
-    local secControl = Core.UI.createSection(page, "4. Pengaturan & Eksekusi")
+    -- UI SETUP: Pengaturan Kecepatan
+    local secControl = Core.UI.createSection(page, "4. Pengaturan Kecepatan")
     Core.UI.createInputRow("Walk Speed", "45", secControl, 0.4, "pabrikWalkSpeed")
     Core.UI.createInputRow("Place Delay (ms)", "150", secControl, 0.4, "pabrikPlaceSpeed")
     Core.UI.createInputRow("Break Speed (ms)", "250", secControl, 0.4, "pabrikBreakSpeed")
+
+    local togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false)
+
+    -- [BARU] UI SETUP: AUTO CLEAR WORLD
+    local secClear = Core.UI.createSection(page, "5. Auto Clear World")
+    Core.UI.createInputRow("Titik Sudut Awal [X,Y]", "0,0", secClear, 0.4, "clearStartPos")
+    Core.UI.createInputRow("Titik Sudut Akhir [X,Y]", "20,20", secClear, 0.4, "clearEndPos")
+    local toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false)
     
     -- ==========================================
-    -- FUNGSI UTILITAS PABRIK
+    -- FUNGSI UTILITAS UMUM
     -- ==========================================
     local function ParsePos(text)
         if not text then return 0, 0 end
@@ -86,13 +94,19 @@ return function(Core)
         return false
     end
 
+    -- Khusus untuk Auto Clear: Hanya deteksi Layer 1 (Foreground/Block solid)
+    local function HasForegroundBlock(gx, gy)
+        if Core.Managers.WorldManager and Core.Managers.WorldManager.GetTile then
+            return Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil
+        end
+        return false
+    end
+
     local function IsSaplingGrown(gx, gy, plantTime, saplingId)
         local rarity = 1
         if Core.Managers.ItemsManager and Core.Managers.ItemsManager.ItemsData then
             local itemData = Core.Managers.ItemsManager.ItemsData[saplingId]
-            if itemData and itemData.Rarity then
-                rarity = itemData.Rarity
-            end
+            if itemData and itemData.Rarity then rarity = itemData.Rarity end
         end
 
         local requiredGrowTime = (rarity * rarity * rarity) + (rarity * 30)
@@ -100,9 +114,7 @@ return function(Core)
 
         if Core.Managers.WorldManager and Core.Managers.WorldManager.GetTile then
             local tileId, tileMeta = Core.Managers.WorldManager.GetTile(gx, gy, 1)
-            if type(tileMeta) == "table" and tileMeta.at then
-                serverPlantedAt = tileMeta.at
-            end
+            if type(tileMeta) == "table" and tileMeta.at then serverPlantedAt = tileMeta.at end
         end
 
         local currentTime = workspace:GetServerTimeNow()
@@ -119,18 +131,12 @@ return function(Core)
         end
     end
 
-    -- ==========================================
-    -- SISTEM GLIDING & FLUID LOOT
-    -- ==========================================
-    
-    -- Bergerak mengalir (Lerp/Velocity math) lurus ke titik Vector3
     local function GlideTo(targetPos, moveSpeed)
         if not Core.Managers.MovementState then return false end
         local currentPos = Core.Managers.MovementState.Position
         local dist = (targetPos - currentPos).Magnitude
         
-        -- Meluncur perlahan tapi pasti, tidak mempedulikan Grid/A*
-        while dist > 0.5 and Core.Toggles.autoPabrik do
+        while dist > 0.5 and (Core.Toggles.autoPabrik or Core.Toggles.autoClearWorld) do
             local dt = task.wait()
             local step = (targetPos - currentPos).Unit * moveSpeed * dt
             
@@ -148,7 +154,6 @@ return function(Core)
         return true
     end
 
-    -- Loot yang mengalir persis ke item drop (mengabaikan tengah blok)
     local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
@@ -178,15 +183,12 @@ return function(Core)
                     local itemVec = Vector2.new(part.Position.X, part.Position.Y)
                     local distFromCenter = (itemVec - centerVec).Magnitude
                     
-                    -- Konversi grid rad ke unit jarak fisik (TILE_SIZE)
                     if distFromCenter <= (rad * Core.Utils.TILE_SIZE) then 
                         table.insert(validItems, {item = item, part = part, pos = part.Position}) 
                     end
                 end
             end
 
-            -- Sort by urutan terdekat dengan Player, BUKAN terdekat dengan block!
-            -- Ini membuat loot mengalir dari satu item ke item lain seperti di-magnet.
             table.sort(validItems, function(a, b) 
                 if not Core.Managers.MovementState then return false end
                 local pPos = Core.Managers.MovementState.Position
@@ -194,7 +196,7 @@ return function(Core)
             end)
 
             for _, data in ipairs(validItems) do
-                if not Core.Toggles.autoPabrik then break end
+                if not (Core.Toggles.autoPabrik or Core.Toggles.autoClearWorld) then break end
                 
                 local ex = math.floor(data.pos.X / Core.Utils.TILE_SIZE + 0.5)
                 local ey = math.floor(data.pos.Y / Core.Utils.TILE_SIZE + 0.5)
@@ -204,21 +206,104 @@ return function(Core)
                 else
                     GlideTo(data.pos, moveSpeed)
                     StopMovement()
-                    task.wait(0.05) -- Nafas pungut sedikit
+                    task.wait(0.05)
                 end
             end
         end
     end
 
     -- ==========================================
-    -- MESIN WIKJOK: RUNTIME LOOP
+    -- [BARU] MESIN WIKJOK: AUTO CLEAR WORLD
     -- ==========================================
-    Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
+    toggleClear(false, function(state)
+        if not state then 
+            print("[NLight Clear] Auto Clear Dimatikan.")
+            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+            if hrp then hrp.Anchored = false end
+            return 
+        end
+
+        -- Matikan Pabrik jika sedang nyala agar tidak bentrok
+        if Core.Toggles.autoPabrik then
+            Core.Toggles.autoPabrik = false
+            togglePabrik() -- Update visual toggle
+        end
+
+        print("[NLight Clear] Sistem Dijalankan! Meratakan Area...")
+
+        task.spawn(function()
+            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+            if hrp then hrp.Anchored = true end
+
+            local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
+            local endX, endY = ParsePos(Core.Inputs["clearEndPos"] and Core.Inputs["clearEndPos"].Text or "0,0")
+            
+            local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"] and Core.Inputs["pabrikWalkSpeed"].Text) or 45
+            local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
+
+            -- Tentukan arah sapuan (Kiri/Kanan, Atas/Bawah)
+            local stepX = (startX <= endX) and 1 or -1
+            local stepY = (startY <= endY) and 1 or -1
+
+            for y = startY, endY, stepY do
+                if not Core.Toggles.autoClearWorld then break end
+                
+                for x = startX, endX, stepX do
+                    if not Core.Toggles.autoClearWorld then break end
+
+                    -- Hanya break jika ada blok foreground (Layer 1)
+                    if HasForegroundBlock(x, y) then
+                        if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoClearWorld") then
+                            StopMovement()
+                            task.wait(0.1)
+
+                            local hitCount = 0
+                            local maxHits = 50 -- ANTI-BEDROCK: Jika dipukul 50x gak hancur, skip!
+
+                            while HasForegroundBlock(x, y) and Core.Toggles.autoClearWorld do
+                                if Core.Remotes.PlayerFistRemote then 
+                                    Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(x, y)) 
+                                end
+                                
+                                hitCount = hitCount + 1
+                                if hitCount > maxHits then
+                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] terlalu keras (Bedrock). Melewati...", x, y))
+                                    break
+                                end
+                                
+                                task.wait(breakDelay)
+                            end
+
+                            -- Loot setiap kali habis break satu blok agar item tidak hilang kena despawn
+                            FluidAutoLoot(x, y, walkSpeed, 5)
+                        end
+                    end
+                end
+            end
+
+            print("[NLight Clear] Selesai meratakan area!")
+            Core.Toggles.autoClearWorld = false
+            toggleClear() -- Matikan toggle UI otomatis
+            
+            if hrp then hrp.Anchored = false end
+        end)
+    end)
+
+    -- ==========================================
+    -- MESIN WIKJOK: AUTO PABRIK LOOP (TETAP SAMA)
+    -- ==========================================
+    togglePabrik(false, function(state)
         if not state then 
             print("[NLight Pabrik] Sistem Dimatikan.")
             local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
             if hrp then hrp.Anchored = false end
             return 
+        end
+
+        -- Matikan Auto Clear jika sedang nyala agar tidak bentrok
+        if Core.Toggles.autoClearWorld then
+            Core.Toggles.autoClearWorld = false
+            toggleClear()
         end
 
         print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
@@ -252,11 +337,10 @@ return function(Core)
                     local count, slot = GetItemSlotAndCount(blockType, "block")
                     if count <= 0 then break end
 
-                    -- [DIPERBARUI] Meluncur mengalir langsung ke titik stand, bukan pathfinding kaku
                     local targetStandVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
                     GlideTo(targetStandVec, walkSpeed)
                     StopMovement()
-                    task.wait(0.05) -- Nafas sejenak
+                    task.wait(0.05) 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
@@ -270,9 +354,8 @@ return function(Core)
                         brokeBlock = true
                     end
 
-                    if brokeBlock then task.wait(0.2) end -- Kasih server waktu drop item
+                    if brokeBlock then task.wait(0.2) end
 
-                    -- [DIPERBARUI] Looting mengalir seperti air
                     FluidAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
@@ -288,7 +371,7 @@ return function(Core)
                 local loopStepX = (sStartX <= sEndX) and 1 or -1
                 local loopStepY = (sStartY >= sLimitY) and -2 or 2 
 
-                -- [A] Tanam (Pohon pakai A* karena melewati Grid tertutup)
+                -- [A] Tanam 
                 for y = sStartY, sLimitY, loopStepY do
                     if isOutOfSapling or not Core.Toggles.autoPabrik then break end
                     
