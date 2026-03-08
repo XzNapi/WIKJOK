@@ -101,14 +101,19 @@ return function(Core)
         local targetAll = string.find(mode, "all")
         
         if targetAll or mode == "" then
-            targetSolid = true; targetBg = true
+            targetSolid = true
+            targetBg = true
         end
         
-        if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then return true end
+        if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then
+            return true
+        end
         
         if targetBg then
             for l = 2, 5 do
-                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end
+                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then 
+                    return true 
+                end
             end
         end
         
@@ -224,92 +229,13 @@ return function(Core)
     end
 
     -- ==========================================
-    -- DEKLARASI TOGGLE UTAMA
+    -- PENDAFTARAN TOGGLE & MESIN UTAMA
     -- ==========================================
-    local updatePabrikToggle
-    local updateClearToggle
+    local togglePabrik
+    local toggleClear
 
-    -- ==========================================
-    -- MESIN 1: AUTO CLEAR WORLD
-    -- ==========================================
-    updateClearToggle = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
-        if not state then 
-            print("[NLight Clear] Auto Clear Dimatikan.")
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = false end
-            return 
-        end
-
-        -- Matikan Pabrik jika sedang nyala agar tidak rebutan kontrol
-        if Core.Toggles.autoPabrik then
-            Core.Toggles.autoPabrik = false
-            if updatePabrikToggle then updatePabrikToggle() end
-        end
-
-        print("[NLight Clear] Sistem Dijalankan! Meratakan Area...")
-
-        task.spawn(function()
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = true end
-
-            local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
-            local endX, endY = ParsePos(Core.Inputs["clearEndPos"] and Core.Inputs["clearEndPos"].Text or "0,0")
-            local targetMode = Core.Inputs["clearTargetMode"] and Core.Inputs["clearTargetMode"].Text or "all"
-            
-            local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"] and Core.Inputs["pabrikWalkSpeed"].Text) or 45
-            local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
-
-            local stepX = (startX <= endX) and 1 or -1
-            local stepY = (startY <= endY) and 1 or -1
-
-            for y = startY, endY, stepY do
-                if not Core.Toggles.autoClearWorld then break end
-                
-                for x = startX, endX, stepX do
-                    if not Core.Toggles.autoClearWorld then break end
-
-                    -- Cek target dengan Combo String
-                    if HasTargetClearBlock(x, y, targetMode) then
-                        if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoClearWorld") then
-                            StopMovement()
-                            task.wait(0.1)
-
-                            local hitCount = 0
-                            local maxHits = 50 -- ANTI-BEDROCK
-
-                            while HasTargetClearBlock(x, y, targetMode) and Core.Toggles.autoClearWorld do
-                                if Core.Remotes.PlayerFistRemote then 
-                                    Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(x, y)) 
-                                end
-                                
-                                hitCount = hitCount + 1
-                                if hitCount > maxHits then
-                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] kebal (Bedrock). Melewati...", x, y))
-                                    break
-                                end
-                                task.wait(breakDelay)
-                            end
-
-                            FluidAutoLoot(x, y, walkSpeed, 5)
-                        end
-                    end
-                end
-            end
-
-            -- Jika selesai sampai ujung
-            if Core.Toggles.autoClearWorld then
-                print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
-                Core.Toggles.autoClearWorld = false
-                if updateClearToggle then updateClearToggle() end 
-                if hrp then hrp.Anchored = false end
-            end
-        end)
-    end)
-
-    -- ==========================================
-    -- MESIN 2: AUTO PABRIK LOOP
-    -- ==========================================
-    updatePabrikToggle = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
+    -- [1] MESIN AUTO PABRIK
+    togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
         if not state then 
             print("[NLight Pabrik] Sistem Dimatikan.")
             local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
@@ -317,10 +243,9 @@ return function(Core)
             return 
         end
 
-        -- Matikan Auto Clear jika sedang nyala
-        if Core.Toggles.autoClearWorld then
+        if Core.Toggles.autoClearWorld then 
             Core.Toggles.autoClearWorld = false
-            if updateClearToggle then updateClearToggle() end
+            if toggleClear then toggleClear() end 
         end
 
         print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
@@ -370,6 +295,7 @@ return function(Core)
                     end
 
                     if brokeBlock then task.wait(0.2) end
+
                     FluidAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
@@ -467,6 +393,77 @@ return function(Core)
                     task.wait(2)
                 end
             end
+        end)
+    end)
+
+    -- [2] MESIN AUTO CLEAR WORLD
+    toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
+        if not state then 
+            print("[NLight Clear] Auto Clear Dimatikan.")
+            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+            if hrp then hrp.Anchored = false end
+            return 
+        end
+
+        if Core.Toggles.autoPabrik then 
+            Core.Toggles.autoPabrik = false
+            if togglePabrik then togglePabrik() end 
+        end
+
+        print("[NLight Clear] Sistem Dijalankan! Meratakan Area...")
+
+        task.spawn(function()
+            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+            if hrp then hrp.Anchored = true end
+
+            local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
+            local endX, endY = ParsePos(Core.Inputs["clearEndPos"] and Core.Inputs["clearEndPos"].Text or "0,0")
+            local targetMode = Core.Inputs["clearTargetMode"] and Core.Inputs["clearTargetMode"].Text or "all"
+            
+            local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"] and Core.Inputs["pabrikWalkSpeed"].Text) or 45
+            local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"] and Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
+
+            local stepX = (startX <= endX) and 1 or -1
+            local stepY = (startY <= endY) and 1 or -1
+
+            for y = startY, endY, stepY do
+                if not Core.Toggles.autoClearWorld then break end
+                
+                for x = startX, endX, stepX do
+                    if not Core.Toggles.autoClearWorld then break end
+
+                    if HasTargetClearBlock(x, y, targetMode) then
+                        if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoClearWorld") then
+                            StopMovement()
+                            task.wait(0.1)
+
+                            local hitCount = 0
+                            local maxHits = 50 
+
+                            while HasTargetClearBlock(x, y, targetMode) and Core.Toggles.autoClearWorld do
+                                if Core.Remotes.PlayerFistRemote then 
+                                    Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(x, y)) 
+                                end
+                                
+                                hitCount = hitCount + 1
+                                if hitCount > maxHits then
+                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] kebal (Bedrock). Melewati...", x, y))
+                                    break
+                                end
+                                
+                                task.wait(breakDelay)
+                            end
+
+                            FluidAutoLoot(x, y, walkSpeed, 5)
+                        end
+                    end
+                end
+            end
+
+            print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
+            Core.Toggles.autoClearWorld = false
+            if toggleClear then toggleClear() end 
+            if hrp then hrp.Anchored = false end
         end)
     end)
 end
