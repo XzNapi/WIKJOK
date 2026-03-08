@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (ANTI-GRAVITY HOVER)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (UNANCHORED FLUID EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -39,11 +39,10 @@ return function(Core)
     Core.UI.createInputRow("Target (solid, bg, all)", "solid, bg", secClear, 0.4, "clearTargetMode")
     
     -- ==========================================
-    -- HOVER ENGINE (ANTI-JATUH)
+    -- HOVER ENGINE (ANTI-JATUH TANPA ANCHOR)
     -- ==========================================
     local HoverLockVec = nil
     
-    -- Menimpa gravitasi game setiap frame agar karakter kaku di udara
     task.spawn(function()
         local RS = game:GetService("RunService")
         RS.RenderStepped:Connect(function()
@@ -262,10 +261,10 @@ return function(Core)
     local togglePabrik
     local toggleClear
 
-    -- [1] MESIN AUTO PABRIK
+    -- [1] MESIN AUTO PABRIK (TETAP MENGGUNAKAN ANCHOR UNTUK STABILITAS FARM DI TEMPAT)
     togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
         if not state then 
-            HoverLockVec = nil -- Bebaskan karakter
+            HoverLockVec = nil 
             print("[NLight Pabrik] Sistem Dimatikan.")
             local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
             if hrp then hrp.Anchored = false end
@@ -309,7 +308,7 @@ return function(Core)
                     local targetStandVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
                     GlideTo(targetStandVec, walkSpeed)
                     
-                    HoverLockVec = targetStandVec -- KUNCI MELAYANG
+                    HoverLockVec = targetStandVec 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
@@ -325,7 +324,7 @@ return function(Core)
 
                     if brokeBlock then task.wait(0.2) end
 
-                    HoverLockVec = nil -- LEpas kunci untuk mungut
+                    HoverLockVec = nil 
                     FluidAutoLoot(farmX, farmY, walkSpeed, 5)
                 end
 
@@ -388,7 +387,7 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat (MELAYANG DI ATAS POHON)
+                -- [C] Panen Eksekusi Cepat 
                 if #plantedSaplings > 0 then
                     print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari atas...")
                     for _, sapling in ipairs(plantedSaplings) do
@@ -396,14 +395,14 @@ return function(Core)
                         
                         local success, lockPos = StandAboveTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik")
                         if success and lockPos then
-                            HoverLockVec = lockPos -- Kunci melayang persis di atas pohon
+                            HoverLockVec = lockPos 
                             task.wait(0.05)
                             
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
                                 task.wait(breakDelay)
                             end
-                            HoverLockVec = nil -- Lepas melayang setelah pohon hancur
+                            HoverLockVec = nil 
                         end
                     end
                     
@@ -429,13 +428,11 @@ return function(Core)
         end)
     end)
 
-    -- [2] MESIN AUTO CLEAR WORLD (MELAYANG DI ATAS BLOK)
+    -- [2] MESIN AUTO CLEAR WORLD (UNANCHORED / MENGALIR)
     toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
         if not state then 
-            HoverLockVec = nil -- Bebaskan karakter
+            HoverLockVec = nil 
             print("[NLight Clear] Auto Clear Dimatikan.")
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = false end
             return 
         end
 
@@ -448,7 +445,9 @@ return function(Core)
 
         task.spawn(function()
             local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = true end
+            
+            -- [!] ANCHOR DIMATIKAN SECARA SPESIFIK DI SINI AGAR PERGERAKAN MENGALIR
+            if hrp then hrp.Anchored = false end
 
             local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
             local endX, endY = ParsePos(Core.Inputs["clearEndPos"] and Core.Inputs["clearEndPos"].Text or "0,0")
@@ -470,7 +469,8 @@ return function(Core)
                         
                         local success, lockPos = StandAboveTarget(x, y, walkSpeed, "autoClearWorld")
                         if success and lockPos then
-                            HoverLockVec = lockPos -- Kunci melayang saat menghancurkan blok di bawahnya
+                            -- Karakter dibiarkan UNANCHORED, namun ditarik secara halus lewat Engine
+                            HoverLockVec = lockPos 
                             task.wait(0.1)
 
                             local hitCount = 0
@@ -489,7 +489,7 @@ return function(Core)
                                 
                                 task.wait(breakDelay)
                             end
-                            HoverLockVec = nil -- Lepas melayang untuk jalan ke blok berikutnya
+                            HoverLockVec = nil -- Lepas ikatan agar bisa meluncur luwes lagi
                         end
                     end
                 end
@@ -499,7 +499,6 @@ return function(Core)
             print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
             Core.Toggles.autoClearWorld = false
             if toggleClear then toggleClear() end 
-            if hrp then hrp.Anchored = false end
         end)
     end)
 end
