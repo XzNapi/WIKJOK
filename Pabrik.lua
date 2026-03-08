@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (UNANCHORED FLUID EDITION)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (FLUID HOVER EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -39,26 +39,7 @@ return function(Core)
     Core.UI.createInputRow("Target (solid, bg, all)", "solid, bg", secClear, 0.4, "clearTargetMode")
     
     -- ==========================================
-    -- HOVER ENGINE (ANTI-JATUH TANPA ANCHOR)
-    -- ==========================================
-    local HoverLockVec = nil
-    
-    task.spawn(function()
-        local RS = game:GetService("RunService")
-        RS.RenderStepped:Connect(function()
-            if HoverLockVec and Core.Managers.MovementState then
-                Core.Managers.MovementState.Position = HoverLockVec
-                Core.Managers.MovementState.OldPosition = HoverLockVec
-                Core.Managers.MovementState.VelocityY = 0
-                Core.Managers.MovementState.VelocityX = 0
-                Core.Managers.MovementState.MoveX = 0
-                Core.Managers.MovementState.MoveY = 0
-            end
-        end)
-    end)
-
-    -- ==========================================
-    -- FUNGSI UTILITAS PABRIK & CLEAR WORLD
+    -- FUNGSI UTILITAS UMUM
     -- ==========================================
     local function ParsePos(text)
         if not text then return 0, 0 end
@@ -114,14 +95,11 @@ return function(Core)
     local function HasTargetClearBlock(gx, gy, mode)
         if not Core.Managers.WorldManager or not Core.Managers.WorldManager.GetTile then return false end
         mode = string.lower(mode)
-        
         local targetSolid = string.find(mode, "solid")
         local targetBg = string.find(mode, "bg")
         local targetAll = string.find(mode, "all")
         
-        if targetAll or mode == "" then
-            targetSolid = true; targetBg = true
-        end
+        if targetAll or mode == "" then targetSolid = true; targetBg = true end
         
         if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then return true end
         if targetBg then
@@ -149,55 +127,54 @@ return function(Core)
         return (currentTime - serverPlantedAt) >= requiredGrowTime
     end
 
-    local function StopMovement()
-        if Core.Managers.MovementState then
-            Core.Managers.MovementState.VelocityX = 0; Core.Managers.MovementState.VelocityY = 0
-            Core.Managers.MovementState.MoveX = 0; Core.Managers.MovementState.MoveY = 0
-            Core.Managers.MovementState.OldPosition = Core.Managers.MovementState.Position
-        end
-    end
-
-    local function GlideTo(targetPos, moveSpeed)
+    -- ==========================================
+    -- SISTEM PERGERAKAN MENGALIR (NO RUBBERBAND)
+    -- ==========================================
+    
+    -- Bergerak mengalir ke target dengan Velocity murni (Aman dari Anti-Cheat)
+    local function FluidMoveToRaw(targetPos, speed, modeKey)
         if not Core.Managers.MovementState then return false end
-        local currentPos = Core.Managers.MovementState.Position
-        local dist = (targetPos - currentPos).Magnitude
-        local safeSpeed = math.min(moveSpeed, 45) 
+        local maxSpeed = math.min(speed, 50) 
         
-        while dist > 0.5 and (Core.Toggles.autoPabrik or Core.Toggles.autoClearWorld) do
-            local dt = task.wait()
-            local step = (targetPos - currentPos).Unit * safeSpeed * dt
+        while Core.Toggles[modeKey] do
+            local currentPos = Core.Managers.MovementState.Position
+            local dist = (targetPos - currentPos).Magnitude
             
-            if step.Magnitude >= dist then
-                Core.Managers.MovementState.Position = targetPos
-                Core.Managers.MovementState.OldPosition = targetPos
+            -- Jika sudah sangat dekat, rem total
+            if dist <= 0.5 then
+                Core.Managers.MovementState.VelocityX = 0
+                Core.Managers.MovementState.VelocityY = 0
+                Core.Managers.MovementState.Position = targetPos -- Snap halus
                 break
-            else
-                currentPos = currentPos + step
-                Core.Managers.MovementState.Position = currentPos
-                Core.Managers.MovementState.OldPosition = currentPos
             end
-            dist = (targetPos - currentPos).Magnitude
+            
+            local dir = (targetPos - currentPos).Unit
+            
+            -- Memaksa fisik karakter terbang ke arah target layaknya di-magnet
+            Core.Managers.MovementState.VelocityX = dir.X * maxSpeed
+            Core.Managers.MovementState.VelocityY = dir.Y * maxSpeed
+            
+            task.wait()
         end
         return true
     end
 
-    local function StandAboveTarget(gx, gy, moveSpeed, modeKey)
-        if not Core.Managers.MovementState then return false, nil end
+    -- Navigasi Aman: Pathfinding dulu, lalu Mengalir presisi ke titik Y+1
+    local function SafeStandAbove(gx, gy, moveSpeed, modeKey)
         local standX = gx
         local standY = gy + 1 
-        local targetVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
         
-        if Core.Pathfinding.aiMoveTo(standX, standY, math.min(moveSpeed, 45), modeKey) then
-            StopMovement()
-            return true, targetVec
-        else
-            GlideTo(targetVec, math.min(moveSpeed, 45))
-            StopMovement()
-            return true, targetVec
-        end
+        -- 1. Pathfinding untuk menghindari dinding/halangan besar
+        Core.Pathfinding.aiMoveTo(standX, standY, moveSpeed, modeKey)
+        
+        -- 2. Mengalir (Fluid Fly) ke titik presisi agar posisinya absolut akurat
+        local exactPos = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
+        FluidMoveToRaw(exactPos, moveSpeed, modeKey)
+        
+        return true, exactPos
     end
 
-    local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
+    local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius, modeKey)
         local rad = customRadius or 15
         local dropsFolder = workspace:FindFirstChild("Drops") or workspace:FindFirstChild("DroppedItems") or workspace:FindFirstChild("Items")
         local itemsToLoot = {}
@@ -232,6 +209,7 @@ return function(Core)
                 end
             end
 
+            -- Urutkan item dari yang paling dekat dengan karakter agar mengalir berurutan
             table.sort(validItems, function(a, b) 
                 if not Core.Managers.MovementState then return false end
                 local pPos = Core.Managers.MovementState.Position
@@ -239,7 +217,7 @@ return function(Core)
             end)
 
             for _, data in ipairs(validItems) do
-                if not (Core.Toggles.autoPabrik or Core.Toggles.autoClearWorld) then break end
+                if not Core.Toggles[modeKey] then break end
                 
                 local ex = math.floor(data.pos.X / Core.Utils.TILE_SIZE + 0.5)
                 local ey = math.floor(data.pos.Y / Core.Utils.TILE_SIZE + 0.5)
@@ -247,8 +225,7 @@ return function(Core)
                 if Core.Pathfinding.isOutOfBounds(ex, ey) or Core.Pathfinding.isItemTrapped(ex, ey) then
                     Core.Pathfinding.blacklistedItems[data.item] = true
                 else
-                    GlideTo(data.pos, moveSpeed)
-                    StopMovement()
+                    FluidMoveToRaw(data.pos, moveSpeed, modeKey)
                     task.wait(0.05)
                 end
             end
@@ -261,13 +238,10 @@ return function(Core)
     local togglePabrik
     local toggleClear
 
-    -- [1] MESIN AUTO PABRIK (TETAP MENGGUNAKAN ANCHOR UNTUK STABILITAS FARM DI TEMPAT)
+    -- [1] MESIN AUTO PABRIK
     togglePabrik = Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
         if not state then 
-            HoverLockVec = nil 
             print("[NLight Pabrik] Sistem Dimatikan.")
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = false end
             return 
         end
 
@@ -279,9 +253,6 @@ return function(Core)
         print("[NLight Pabrik] Sistem Dijalankan! Membaca Jalur...")
 
         task.spawn(function()
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            if hrp then hrp.Anchored = true end
-
             while Core.Toggles.autoPabrik do
                 local standX, standY = ParsePos(Core.Inputs["pabrikStandPos"] and Core.Inputs["pabrikStandPos"].Text or "0,0")
                 local farmX, farmY = ParsePos(Core.Inputs["pabrikBlockPos"] and Core.Inputs["pabrikBlockPos"].Text or "0,0")
@@ -306,9 +277,9 @@ return function(Core)
                     if count <= 0 then break end
 
                     local targetStandVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
-                    GlideTo(targetStandVec, walkSpeed)
-                    
-                    HoverLockVec = targetStandVec 
+                    Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
+                    FluidMoveToRaw(targetStandVec, walkSpeed, "autoPabrik")
+                    task.wait(0.05) 
 
                     if not HasBlock(farmX, farmY) and Core.Remotes.PlayerPlaceRemote then
                         Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
@@ -317,6 +288,11 @@ return function(Core)
 
                     local brokeBlock = false
                     while HasBlock(farmX, farmY) and Core.Toggles.autoPabrik do
+                        -- Mengunci posisi di udara tanpa Anchor (Murni nol-kan kecepatan)
+                        if Core.Managers.MovementState then
+                            Core.Managers.MovementState.VelocityX = 0
+                            Core.Managers.MovementState.VelocityY = 0
+                        end
                         if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(farmX, farmY)) end
                         task.wait(breakDelay)
                         brokeBlock = true
@@ -324,8 +300,7 @@ return function(Core)
 
                     if brokeBlock then task.wait(0.2) end
 
-                    HoverLockVec = nil 
-                    FluidAutoLoot(farmX, farmY, walkSpeed, 5)
+                    FluidAutoLoot(farmX, farmY, walkSpeed, 5, "autoPabrik")
                 end
 
                 if not Core.Toggles.autoPabrik then break end
@@ -352,16 +327,15 @@ return function(Core)
                         end
                         
                         if not HasBlock(x, y) then
-                            if Core.Pathfinding.aiMoveTo(x, y, math.min(walkSpeed, 45), "autoPabrik") then
-                                StopMovement()
-                                task.wait(0.1)
-                                if Core.Remotes.PlayerPlaceRemote then
-                                    Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
-                                    table.insert(plantedSaplings, {X = x, Y = y, Time = workspace:GetServerTimeNow()})
-                                    task.wait(placeDelay)
-                                end
-                            else
-                                Core.Pathfinding.blacklistedSpots[x..","..y] = true
+                            -- Pathfinding menuju spot tanam
+                            Core.Pathfinding.aiMoveTo(x, y, math.min(walkSpeed, 45), "autoPabrik")
+                            FluidMoveToRaw(Vector3.new(x, y, 0) * Core.Utils.TILE_SIZE, walkSpeed, "autoPabrik")
+                            task.wait(0.1)
+                            
+                            if Core.Remotes.PlayerPlaceRemote then
+                                Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(x, y), sSlot)
+                                table.insert(plantedSaplings, {X = x, Y = y, Time = workspace:GetServerTimeNow()})
+                                task.wait(placeDelay)
                             end
                         end
                     end
@@ -387,22 +361,26 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat 
+                -- [C] Panen Eksekusi Cepat (BERDIRI DI ATAS POHON)
                 if #plantedSaplings > 0 then
                     print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari atas...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        local success, lockPos = StandAboveTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik")
-                        if success and lockPos then
-                            HoverLockVec = lockPos 
+                        -- Terbang mulus ke Y+1
+                        local success = SafeStandAbove(sapling.X, sapling.Y, walkSpeed, "autoPabrik")
+                        if success then
                             task.wait(0.05)
-                            
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
+                                -- Menahan Karakter tetap Melayang (Zero Gravity)
+                                if Core.Managers.MovementState then
+                                    Core.Managers.MovementState.VelocityX = 0
+                                    Core.Managers.MovementState.VelocityY = 0
+                                end
+                                
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
                                 task.wait(breakDelay)
                             end
-                            HoverLockVec = nil 
                         end
                     end
                     
@@ -415,7 +393,7 @@ return function(Core)
                     local centerY = (sStartY + sLimitY) / 2
                     local fieldRadius = math.max(math.abs(sStartX - sEndX), math.abs(sStartY - sLimitY)) + 10
                     
-                    FluidAutoLoot(centerX, centerY, walkSpeed, fieldRadius)
+                    FluidAutoLoot(centerX, centerY, walkSpeed, fieldRadius, "autoPabrik")
                 end
 
                 -- [D] ANTI-CRASH PROTECTION
@@ -428,10 +406,9 @@ return function(Core)
         end)
     end)
 
-    -- [2] MESIN AUTO CLEAR WORLD (UNANCHORED / MENGALIR)
+    -- [2] MESIN AUTO CLEAR WORLD
     toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
         if not state then 
-            HoverLockVec = nil 
             print("[NLight Clear] Auto Clear Dimatikan.")
             return 
         end
@@ -444,11 +421,6 @@ return function(Core)
         print("[NLight Clear] Sistem Dijalankan! Meratakan Area...")
 
         task.spawn(function()
-            local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
-            
-            -- [!] ANCHOR DIMATIKAN SECARA SPESIFIK DI SINI AGAR PERGERAKAN MENGALIR
-            if hrp then hrp.Anchored = false end
-
             local startX, startY = ParsePos(Core.Inputs["clearStartPos"] and Core.Inputs["clearStartPos"].Text or "0,0")
             local endX, endY = ParsePos(Core.Inputs["clearEndPos"] and Core.Inputs["clearEndPos"].Text or "0,0")
             local targetMode = Core.Inputs["clearTargetMode"] and Core.Inputs["clearTargetMode"].Text or "all"
@@ -467,35 +439,37 @@ return function(Core)
 
                     if HasTargetClearBlock(x, y, targetMode) then
                         
-                        local success, lockPos = StandAboveTarget(x, y, walkSpeed, "autoClearWorld")
-                        if success and lockPos then
-                            -- Karakter dibiarkan UNANCHORED, namun ditarik secara halus lewat Engine
-                            HoverLockVec = lockPos 
-                            task.wait(0.1)
-
+                        -- Bergerak mulus ke koordinat atas blok
+                        local success = SafeStandAbove(x, y, walkSpeed, "autoClearWorld")
+                        if success then
+                            task.wait(0.05)
                             local hitCount = 0
                             local maxHits = 50 
 
                             while HasTargetClearBlock(x, y, targetMode) and Core.Toggles.autoClearWorld do
+                                -- Mengunci gaya gravitasi ke 0 agar melayang diam
+                                if Core.Managers.MovementState then
+                                    Core.Managers.MovementState.VelocityX = 0
+                                    Core.Managers.MovementState.VelocityY = 0
+                                end
+                                
                                 if Core.Remotes.PlayerFistRemote then 
                                     Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(x, y)) 
                                 end
                                 
                                 hitCount = hitCount + 1
                                 if hitCount > maxHits then
-                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] kebal (Bedrock). Melewati...", x, y))
+                                    print(string.format("[WIKJOK Clear] Blok di [%d, %d] kebal. Melewati...", x, y))
                                     break
                                 end
                                 
                                 task.wait(breakDelay)
                             end
-                            HoverLockVec = nil -- Lepas ikatan agar bisa meluncur luwes lagi
                         end
                     end
                 end
             end
 
-            HoverLockVec = nil
             print("[NLight Clear] Operasi selesai! Area sudah rata sesuai target.")
             Core.Toggles.autoClearWorld = false
             if toggleClear then toggleClear() end 
