@@ -6,7 +6,193 @@ return function(Core)
     local page = Core.Pages.Pabrik
     if not page then return warn("[NLight] Halaman Pabrik tidak ditemukan di Core!") end
 
-    -- UI SETUP: Titik Awal & Block
+    -- UI SETUP: Titik Awal & Blockreturn function(Core)
+    -- ==========================================
+    -- WIKJOK: AUTO PABRIK & SMART AI CLEAR WORLD
+    -- ==========================================
+    
+    local page = Core.Pages.Pabrik
+    if not page then return warn("[NLight] Halaman Pabrik tidak ditemukan di Core!") end
+
+    -- UI SETUP (Tetap sama agar tidak membingungkan)
+    local secArea = Core.UI.createSection(page, "1. Titik Awal & Area Block")
+    Core.UI.createInputRow("Player Stand Pos [X,Y]", "10,5", secArea, 0.4, "pabrikStandPos")
+    Core.UI.createInputRow("Block Farm Pos [X,Y]", "11,5", secArea, 0.4, "pabrikBlockPos")
+
+    local secBlock = Core.UI.createSection(page, "2. Pemilihan Item Block")
+    Core.UI.createInputRow("Item to Farm (Block)", "dirt", secBlock, 0.4, "pabrikBlockType")
+
+    local secSapling = Core.UI.createSection(page, "3. Area Sapling (Plant & Break)")
+    Core.UI.createInputRow("Awal Tanam [X,Y]", "45,37", secSapling, 0.4, "pabrikSapStart")
+    Core.UI.createInputRow("Akhir Tanam [X,Y]", "55,37", secSapling, 0.4, "pabrikSapEnd")
+    Core.UI.createInputRow("Baris Akhir [Y]", "29", secSapling, 0.4, "pabrikSapLimitY")
+    
+    Core.UI.createInventoryDropdown("Pilih Sapling", "pabrikSaplingType", secSapling, nil, function(itemName, itemId)
+        local n = string.lower(itemName); local id = string.lower(itemId)
+        return string.find(n, "sapling") or string.find(id, "sapling")
+    end)
+
+    local secControl = Core.UI.createSection(page, "4. Pengaturan Kecepatan")
+    Core.UI.createInputRow("Walk Speed", "45", secControl, 0.4, "pabrikWalkSpeed")
+    Core.UI.createInputRow("Place Delay (ms)", "150", secControl, 0.4, "pabrikPlaceSpeed")
+    Core.UI.createInputRow("Break Speed (ms)", "250", secControl, 0.4, "pabrikBreakSpeed")
+
+    local secClear = Core.UI.createSection(page, "5. Auto Clear World (Smart AI)")
+    Core.UI.createInputRow("Titik Sudut Awal [X,Y]", "0,0", secClear, 0.4, "clearStartPos")
+    Core.UI.createInputRow("Titik Sudut Akhir [X,Y]", "20,20", secClear, 0.4, "clearEndPos")
+    Core.UI.createInputRow("Target (solid, bg, all)", "all", secClear, 0.4, "clearTargetMode")
+    
+    -- ==========================================
+    -- FUNGSI UTILITAS PINTAR
+    -- ==========================================
+    local function ParsePos(text)
+        if not text then return 0, 0 end
+        local x, y = string.match(text, "([%d%-]+)%s*,%s*([%d%-]+)")
+        return (tonumber(x) or 0), (tonumber(y) or 0)
+    end
+
+    local function GetItemSlotAndCount(targetName, expectedType)
+        local count, targetSlot = 0, nil
+        targetName = string.lower(targetName)
+        if Core.Managers.InventoryModule and Core.Managers.InventoryModule.Stacks then
+            for i = 1, (Core.Managers.InventoryModule.MaxSlots or 100) do
+                local stack = Core.Managers.InventoryModule.Stacks[i]
+                if stack and stack.Id and stack.Amount and stack.Amount > 0 then
+                    local idStr = string.lower(tostring(stack.Id))
+                    local isMatch = false
+                    if expectedType == "block" then
+                        if string.find(idStr, targetName) and not string.find(idStr, "_sapling") then isMatch = true end
+                    elseif expectedType == "sapling" then
+                        if string.find(idStr, targetName) and string.find(idStr, "_sapling") then isMatch = true end
+                    end
+                    if isMatch then count = count + stack.Amount; if not targetSlot then targetSlot = i end end
+                end
+            end
+        end
+        return count, targetSlot
+    end
+
+    -- AI: Cek semua layer (1-5) di satu koordinat
+    local function IsTileEmpty(gx, gy, mode)
+        if not Core.Managers.WorldManager or not Core.Managers.WorldManager.GetTile then return true end
+        mode = string.lower(mode or "all")
+        
+        local checkSolid = (mode == "all" or string.find(mode, "solid"))
+        local checkBg = (mode == "all" or string.find(mode, "bg"))
+
+        if checkSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) then return false end
+        if checkBg then
+            for l = 2, 5 do
+                if Core.Managers.WorldManager.GetTile(gx, gy, l) then return false end
+            end
+        end
+        return true
+    end
+
+    local function SetHoverState(isHovering)
+        local hrp = Core.LocalPlayer.Character and (Core.LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or Core.LocalPlayer.Character.PrimaryPart)
+        if hrp then
+            hrp.Anchored = isHovering
+            if isHovering and Core.Managers.MovementState then
+                Core.Managers.MovementState.VelocityX = 0; Core.Managers.MovementState.VelocityY = 0
+            end
+        end
+    end
+
+    -- ==========================================
+    -- MESIN UTAMA
+    -- ==========================================
+    
+    -- [1] AUTO PABRIK (Logic Samping Aman)
+    Core.UI.createToggle("▶ ENABLE AUTO PABRIK", "autoPabrik", secControl, false, function(state)
+        if not state then SetHoverState(false); return end
+        task.spawn(function()
+            while Core.Toggles.autoPabrik do
+                local standX, standY = ParsePos(Core.Inputs["pabrikStandPos"].Text)
+                local farmX, farmY = ParsePos(Core.Inputs["pabrikBlockPos"].Text)
+                local blockType = string.lower(Core.Inputs["pabrikBlockType"].Text)
+                local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"].Text) or 45
+                local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
+                local placeDelay = (tonumber(Core.Inputs["pabrikPlaceSpeed"].Text) or 150) / 1000
+
+                local count, slot = GetItemSlotAndCount(blockType, "block")
+                if count > 0 then
+                    SetHoverState(false)
+                    Core.Pathfinding.aiMoveTo(standX, standY, walkSpeed, "autoPabrik")
+                    SetHoverState(true)
+                    
+                    if not Core.Managers.WorldManager.GetTile(farmX, farmY, 1) then
+                        Core.Remotes.PlayerPlaceRemote:FireServer(Vector2.new(farmX, farmY), slot)
+                        task.wait(placeDelay)
+                    end
+                    
+                    while Core.Managers.WorldManager.GetTile(farmX, farmY, 1) and Core.Toggles.autoPabrik do
+                        Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(farmX, farmY))
+                        task.wait(breakDelay)
+                    end
+                    task.wait(0.1)
+                else
+                    task.wait(1) -- Tunggu sapling/panen jika block habis
+                end
+            end
+        end)
+    end)
+
+    -- [2] SMART AI CLEAR WORLD
+    Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
+        if not state then SetHoverState(false); return end
+        
+        task.spawn(function()
+            local startX, startY = ParsePos(Core.Inputs["clearStartPos"].Text)
+            local endX, endY = ParsePos(Core.Inputs["clearEndPos"].Text)
+            local mode = Core.Inputs["clearTargetMode"].Text
+            local walkSpeed = tonumber(Core.Inputs["pabrikWalkSpeed"].Text) or 45
+            local breakDelay = (tonumber(Core.Inputs["pabrikBreakSpeed"].Text) or 250) / 1000
+
+            local stepX = (startX <= endX) and 1 or -1
+            local stepY = (startY <= endY) and 1 or -1
+
+            for y = startY, endY, stepY do
+                for x = startX, endX, stepX do
+                    if not Core.Toggles.autoClearWorld then break end
+
+                    -- AI STEP 1: Cek apakah koordinat ini butuh di-break
+                    if not IsTileEmpty(x, y, mode) then
+                        
+                        -- AI STEP 2: Cari posisi berdiri di SAMPING (tidak menabrak)
+                        -- Berhenti di (x - stepX) agar selalu ada jarak 1 blok
+                        local safeStandX = x - stepX
+                        
+                        SetHoverState(false)
+                        Core.Pathfinding.aiMoveTo(safeStandX, y, walkSpeed, "autoClearWorld")
+                        
+                        -- AI STEP 3: Kunci posisi sebelum eksekusi
+                        SetHoverState(true)
+                        task.wait(0.05)
+
+                        -- AI STEP 4: Break sampai SEMUA layer di koordinat (x,y) bersih
+                        local hitCount = 0
+                        while not IsTileEmpty(x, y, mode) and Core.Toggles.autoClearWorld do
+                            Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(x, y))
+                            task.wait(breakDelay)
+                            
+                            hitCount = hitCount + 1
+                            if hitCount > 50 then break end -- Proteksi anti-stuck (bedrock)
+                        end
+                        
+                        -- AI STEP 5: Karakter dilarang jalan sebelum loop di atas selesai (IsTileEmpty = true)
+                        print("Blok di " .. x .. "," .. y .. " bersih. Melanjut ke koordinat berikutnya...")
+                    end
+                end
+                if not Core.Toggles.autoClearWorld then break end
+            end
+            
+            SetHoverState(false)
+            print("Auto Clear Selesai!")
+            Core.Toggles.autoClearWorld = false
+        end)
+    end)
+end
     local secArea = Core.UI.createSection(page, "1. Titik Awal & Area Block")
     Core.UI.createInputRow("Player Stand Pos [X,Y]", "10,5", secArea, 0.4, "pabrikStandPos")
     Core.UI.createInputRow("Block Farm Pos [X,Y]", "11,5", secArea, 0.4, "pabrikBlockPos")
