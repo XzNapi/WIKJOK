@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR WORLD (FIXED)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR WORLD (NO-LOOT CLEAR)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -454,7 +454,8 @@ return function(Core)
                                 task.wait(breakDelay)
                             end
 
-                            FluidAutoLoot(x, y, walkSpeed, 5)
+                            -- [DIMATIKAN] Auto Loot khusus untuk Clear World telah dinonaktifkan sesuai permintaan.
+                            -- FluidAutoLoot(x, y, walkSpeed, 5)
                         end
                     end
                 end
