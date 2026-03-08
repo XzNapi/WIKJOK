@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR WORLD (NO-LOOT CLEAR)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (SAFE APPROACH EDITION)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -105,18 +105,10 @@ return function(Core)
             targetBg = true
         end
         
-        if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then
-            return true
-        end
-        
+        if targetSolid and Core.Managers.WorldManager.GetTile(gx, gy, 1) ~= nil then return true end
         if targetBg then
-            for l = 2, 5 do
-                if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then 
-                    return true 
-                end
-            end
+            for l = 2, 5 do if Core.Managers.WorldManager.GetTile(gx, gy, l) ~= nil then return true end end
         end
-        
         return false
     end
 
@@ -147,14 +139,58 @@ return function(Core)
         end
     end
 
+    -- [DIPERBARUI] Safe Approach Engine (Pencegah Tembus Block & Rubberband)
+    local function SafeApproachBlock(gx, gy, baseSpeed, modeKey)
+        if not Core.Managers.MovementState then return false end
+        local targetVec = Vector3.new(gx, gy, 0) * Core.Utils.TILE_SIZE
+        local pPos = Core.Managers.MovementState.Position
+        local dist = (targetVec - pPos).Magnitude
+        
+        -- Jangkauan pukul aman (1.1 blok). Bot akan berhenti sebelum menyentuh hitbox.
+        local safeReach = Core.Utils.TILE_SIZE * 1.1
+        
+        -- Jika bot sudah di sebelah blok, tidak usah jalan lagi
+        if dist <= safeReach then
+            StopMovement()
+            return true
+        end
+        
+        -- Turunkan kecepatan maksimum jadi 32 agar tidak meluncur terlalu kencang
+        local approachSpeed = math.min(baseSpeed, 32)
+        
+        while dist > safeReach and Core.Toggles[modeKey] do
+            local dt = task.wait()
+            local step = (targetVec - pPos).Unit * approachSpeed * dt
+            
+            -- Pengereman presisi: Pas di pinggir batas aman
+            if step.Magnitude >= (dist - safeReach) then
+                pPos = targetVec - ((targetVec - pPos).Unit * safeReach)
+                Core.Managers.MovementState.Position = pPos
+                Core.Managers.MovementState.OldPosition = pPos
+                break
+            else
+                pPos = pPos + step
+                Core.Managers.MovementState.Position = pPos
+                Core.Managers.MovementState.OldPosition = pPos
+            end
+            
+            dist = (targetVec - pPos).Magnitude
+        end
+        
+        StopMovement()
+        return true
+    end
+
+    -- Glide normal untuk ke area kosong (diberi speed limiter agar tidak lag)
     local function GlideTo(targetPos, moveSpeed)
         if not Core.Managers.MovementState then return false end
         local currentPos = Core.Managers.MovementState.Position
         local dist = (targetPos - currentPos).Magnitude
+        local safeSpeed = math.min(moveSpeed, 45) -- Anti-rubberband cap
         
         while dist > 0.5 and (Core.Toggles.autoPabrik or Core.Toggles.autoClearWorld) do
             local dt = task.wait()
-            local step = (targetPos - currentPos).Unit * moveSpeed * dt
+            local step = (targetPos - currentPos).Unit * safeSpeed * dt
             
             if step.Magnitude >= dist then
                 Core.Managers.MovementState.Position = targetPos
@@ -323,7 +359,8 @@ return function(Core)
                         end
                         
                         if not HasBlock(x, y) then
-                            if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoPabrik") then
+                            -- Pakai kecepatan normal dengan limit anti-rubberband
+                            if Core.Pathfinding.aiMoveTo(x, y, math.min(walkSpeed, 45), "autoPabrik") then
                                 StopMovement()
                                 task.wait(0.1)
                                 if Core.Remotes.PlayerPlaceRemote then
@@ -358,14 +395,14 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat
+                -- [C] Panen Eksekusi Cepat (Pakai Safe Approach)
                 if #plantedSaplings > 0 then
                     print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        if Core.Pathfinding.aiMoveTo(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
-                            StopMovement()
+                        -- Berhenti di sebelah pohon, JANGAN TABRAK BATANGNYA
+                        if SafeApproachBlock(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
                             task.wait(0.05)
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
@@ -396,7 +433,7 @@ return function(Core)
         end)
     end)
 
-    -- [2] MESIN AUTO CLEAR WORLD
+    -- [2] MESIN AUTO CLEAR WORLD (Pakai Safe Approach)
     toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
         if not state then 
             print("[NLight Clear] Auto Clear Dimatikan.")
@@ -433,8 +470,8 @@ return function(Core)
                     if not Core.Toggles.autoClearWorld then break end
 
                     if HasTargetClearBlock(x, y, targetMode) then
-                        if Core.Pathfinding.aiMoveTo(x, y, walkSpeed, "autoClearWorld") then
-                            StopMovement()
+                        -- Berhenti sebelum menyentuh hitbox
+                        if SafeApproachBlock(x, y, walkSpeed, "autoClearWorld") then
                             task.wait(0.1)
 
                             local hitCount = 0
@@ -453,9 +490,6 @@ return function(Core)
                                 
                                 task.wait(breakDelay)
                             end
-
-                            -- [DIMATIKAN] Auto Loot khusus untuk Clear World telah dinonaktifkan sesuai permintaan.
-                            -- FluidAutoLoot(x, y, walkSpeed, 5)
                         end
                     end
                 end
