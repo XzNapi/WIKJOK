@@ -1,6 +1,6 @@
 return function(Core)
     -- ==========================================
-    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (SAFE APPROACH EDITION)
+    -- WIKJOK: AUTO PABRIK & COMBO CLEAR (TOP-DOWN BREAKER)
     -- ==========================================
     
     local page = Core.Pages.Pabrik
@@ -139,54 +139,11 @@ return function(Core)
         end
     end
 
-    -- [DIPERBARUI] Safe Approach Engine (Pencegah Tembus Block & Rubberband)
-    local function SafeApproachBlock(gx, gy, baseSpeed, modeKey)
-        if not Core.Managers.MovementState then return false end
-        local targetVec = Vector3.new(gx, gy, 0) * Core.Utils.TILE_SIZE
-        local pPos = Core.Managers.MovementState.Position
-        local dist = (targetVec - pPos).Magnitude
-        
-        -- Jangkauan pukul aman (1.1 blok). Bot akan berhenti sebelum menyentuh hitbox.
-        local safeReach = Core.Utils.TILE_SIZE * 1.1
-        
-        -- Jika bot sudah di sebelah blok, tidak usah jalan lagi
-        if dist <= safeReach then
-            StopMovement()
-            return true
-        end
-        
-        -- Turunkan kecepatan maksimum jadi 32 agar tidak meluncur terlalu kencang
-        local approachSpeed = math.min(baseSpeed, 32)
-        
-        while dist > safeReach and Core.Toggles[modeKey] do
-            local dt = task.wait()
-            local step = (targetVec - pPos).Unit * approachSpeed * dt
-            
-            -- Pengereman presisi: Pas di pinggir batas aman
-            if step.Magnitude >= (dist - safeReach) then
-                pPos = targetVec - ((targetVec - pPos).Unit * safeReach)
-                Core.Managers.MovementState.Position = pPos
-                Core.Managers.MovementState.OldPosition = pPos
-                break
-            else
-                pPos = pPos + step
-                Core.Managers.MovementState.Position = pPos
-                Core.Managers.MovementState.OldPosition = pPos
-            end
-            
-            dist = (targetVec - pPos).Magnitude
-        end
-        
-        StopMovement()
-        return true
-    end
-
-    -- Glide normal untuk ke area kosong (diberi speed limiter agar tidak lag)
     local function GlideTo(targetPos, moveSpeed)
         if not Core.Managers.MovementState then return false end
         local currentPos = Core.Managers.MovementState.Position
         local dist = (targetPos - currentPos).Magnitude
-        local safeSpeed = math.min(moveSpeed, 45) -- Anti-rubberband cap
+        local safeSpeed = math.min(moveSpeed, 45) 
         
         while dist > 0.5 and (Core.Toggles.autoPabrik or Core.Toggles.autoClearWorld) do
             local dt = task.wait()
@@ -204,6 +161,28 @@ return function(Core)
             dist = (targetPos - currentPos).Magnitude
         end
         return true
+    end
+
+    -- [DIPERBARUI] Fungsi Khusus Berdiri di Atas Blok (Y + 1)
+    local function StandAboveTarget(gx, gy, moveSpeed, modeKey)
+        if not Core.Managers.MovementState then return false end
+        
+        -- Titik berdiri: Persis di koordinat X yang sama, tapi Y ditambah 1 (di atasnya)
+        local standX = gx
+        local standY = gy + 1 
+        
+        -- Coba tempuh dengan Pathfinding (agar tidak nyangkut tembok jika jauh)
+        if Core.Pathfinding.aiMoveTo(standX, standY, math.min(moveSpeed, 45), modeKey) then
+            StopMovement()
+            return true
+        else
+            -- Jika pathfinding error (karena atasnya ada daun/blok yang dianggap solid), 
+            -- paksa tarik (Glide) karakternya ke atas situ secara fisik.
+            local targetVec = Vector3.new(standX, standY, 0) * Core.Utils.TILE_SIZE
+            GlideTo(targetVec, math.min(moveSpeed, 45))
+            StopMovement()
+            return true
+        end
     end
 
     local function FluidAutoLoot(radiusGridX, radiusGridY, moveSpeed, customRadius)
@@ -359,7 +338,6 @@ return function(Core)
                         end
                         
                         if not HasBlock(x, y) then
-                            -- Pakai kecepatan normal dengan limit anti-rubberband
                             if Core.Pathfinding.aiMoveTo(x, y, math.min(walkSpeed, 45), "autoPabrik") then
                                 StopMovement()
                                 task.wait(0.1)
@@ -395,14 +373,14 @@ return function(Core)
 
                 if not Core.Toggles.autoPabrik then break end
 
-                -- [C] Panen Eksekusi Cepat (Pakai Safe Approach)
+                -- [C] Panen Eksekusi Cepat (BERDIRI DI ATAS POHON)
                 if #plantedSaplings > 0 then
-                    print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal...")
+                    print("[WIKJOK] Pohon Matang! Memulai Penghancuran Massal dari atas...")
                     for _, sapling in ipairs(plantedSaplings) do
                         if not Core.Toggles.autoPabrik then break end
                         
-                        -- Berhenti di sebelah pohon, JANGAN TABRAK BATANGNYA
-                        if SafeApproachBlock(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
+                        -- Menggunakan fungsi baru: Melayang tepat di atas pohon
+                        if StandAboveTarget(sapling.X, sapling.Y, walkSpeed, "autoPabrik") then
                             task.wait(0.05)
                             while HasBlock(sapling.X, sapling.Y) and Core.Toggles.autoPabrik do
                                 if Core.Remotes.PlayerFistRemote then Core.Remotes.PlayerFistRemote:FireServer(Vector2.new(sapling.X, sapling.Y)) end
@@ -433,7 +411,7 @@ return function(Core)
         end)
     end)
 
-    -- [2] MESIN AUTO CLEAR WORLD (Pakai Safe Approach)
+    -- [2] MESIN AUTO CLEAR WORLD
     toggleClear = Core.UI.createToggle("▶ ENABLE AUTO CLEAR", "autoClearWorld", secClear, false, function(state)
         if not state then 
             print("[NLight Clear] Auto Clear Dimatikan.")
@@ -463,6 +441,7 @@ return function(Core)
             local stepX = (startX <= endX) and 1 or -1
             local stepY = (startY <= endY) and 1 or -1
 
+            -- [TIPS PENTING]: Pastikan Anda memasukkan koordinat Y dari atas ke bawah agar bot tidak kesulitan mencari jalan
             for y = startY, endY, stepY do
                 if not Core.Toggles.autoClearWorld then break end
                 
@@ -470,8 +449,9 @@ return function(Core)
                     if not Core.Toggles.autoClearWorld then break end
 
                     if HasTargetClearBlock(x, y, targetMode) then
-                        -- Berhenti sebelum menyentuh hitbox
-                        if SafeApproachBlock(x, y, walkSpeed, "autoClearWorld") then
+                        
+                        -- Menggunakan fungsi baru: Melayang tepat di atas blok yang mau dihancurkan
+                        if StandAboveTarget(x, y, walkSpeed, "autoClearWorld") then
                             task.wait(0.1)
 
                             local hitCount = 0
